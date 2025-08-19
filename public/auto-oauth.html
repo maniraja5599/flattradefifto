@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auto OAuth - Flattrade</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .container {
+            background: white;
+            padding: 2rem;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            text-align: center;
+            max-width: 400px;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1rem auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .status {
+            margin: 1rem 0;
+            font-size: 1.1rem;
+        }
+        .success { color: #27ae60; }
+        .error { color: #e74c3c; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="spinner"></div>
+        <h2>Flattrade Auto Login</h2>
+        <div id="status" class="status">Preparing automatic login...</div>
+        <div id="details" style="font-size: 0.9rem; color: #666; margin-top: 1rem;"></div>
+    </div>
+
+    <script>
+        let statusElement = document.getElementById('status');
+        let detailsElement = document.getElementById('details');
+        
+        function updateStatus(message, isError = false) {
+            statusElement.textContent = message;
+            statusElement.className = 'status ' + (isError ? 'error' : 'success');
+        }
+        
+        function updateDetails(message) {
+            detailsElement.textContent = message;
+        }
+        
+        // Get URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const authUrl = urlParams.get('url');
+        
+        if (authUrl) {
+            updateStatus('Redirecting to Flattrade OAuth...');
+            updateDetails('Please wait while we redirect you to Flattrade authentication');
+            
+            // Auto-redirect to the actual OAuth URL
+            setTimeout(() => {
+                window.location.href = authUrl;
+            }, 2000);
+        } else {
+            updateStatus('Invalid OAuth URL', true);
+            updateDetails('Please try logging in again from the main application');
+        }
+        
+        // Handle messages from parent window
+        window.addEventListener('message', function(event) {
+            if (event.data === 'auth_success') {
+                updateStatus('Authentication successful!');
+                updateDetails('Closing window and returning to application...');
+                setTimeout(() => {
+                    window.close();
+                }, 2000);
+            }
+        });
+    </script>
+</body>
+</html>
