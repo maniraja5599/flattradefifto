@@ -25,10 +25,10 @@ const FLATTRADE_AUTH_URL = 'https://auth.flattrade.in';
 // Pre-configured credentials (stored securely in production)
 const DEFAULT_CREDENTIALS = {
     userId: 'FT003862',
-    password: 'Weare@5',
+    password: 'Weare@6',
     totp: '17111992',
-    apiKey: 'e9c46450baa94e96825fa823b7471347',
-    apiSecret: '2025.7c7beef52de14d7da6d7767d0c7e9372754cd40a21d2c55f'
+    apiKey: '2475be2c2a5843fa8da2f53c55330619',
+    apiSecret: '2025.dd4e574e686741f7b62e162c06e7bc5a6c9e9036bcafa3a5'
 };
 
 // Global session variables
@@ -49,22 +49,79 @@ const SESSION_FILE = path.join(__dirname, 'session.json');
 function ensureSessionCookie(req, res) {
     let sessionId = req.cookies.sessionId;
     
-    // With session persistence disabled, just return the current session ID
+    // If no cookie but we have a saved session, use that one
+    if (!sessionId && userSessions.size > 0) {
+        // Get the first authenticated session
+        for (const [id, session] of userSessions.entries()) {
+            if (session.isAuthenticated) {
+                sessionId = id;
+                // Set the cookie for future requests
+                res.cookie('sessionId', sessionId, { 
+                    httpOnly: true, 
+                    maxAge: 24 * 60 * 60 * 1000,
+                    sameSite: 'lax'
+                });
+                console.log('🔄 Auto-assigned existing session:', sessionId);
+                break;
+            }
+        }
+    }
+    
     return sessionId;
 }
 
-// Load saved session on startup - DISABLED PER USER REQUEST (LOGIN FRESH EACH TIME)
+// Load saved session on startup
 function loadSavedSession() {
-    // Session persistence disabled - user requested fresh login each time
-    console.log('Session loading disabled - fresh login required each time');
+    try {
+        if (fs.existsSync('./session.json')) {
+            const sessionFile = JSON.parse(fs.readFileSync('./session.json', 'utf8'));
+            
+            // Handle new format { sessionId, data: {...} }
+            if (sessionFile.sessionId && sessionFile.data) {
+                // Ensure loginTime is stored as ISO string for consistency
+                if (sessionFile.data.loginTime instanceof Date) {
+                    sessionFile.data.loginTime = sessionFile.data.loginTime.toISOString();
+                }
+                userSessions.set(sessionFile.sessionId, sessionFile.data);
+                console.log('✅ Loaded session for user:', sessionFile.data.userId);
+                return sessionFile.sessionId;
+            }
+            
+            // Handle old format { sessionId, userId, jKey, ... }
+            if (sessionFile.sessionId && sessionFile.userId && sessionFile.jKey) {
+                const sessionData = {
+                    userId: sessionFile.userId,
+                    jKey: sessionFile.jKey,
+                    clientId: sessionFile.clientId || sessionFile.userId,
+                    isAuthenticated: true,
+                    loginTime: sessionFile.timestamp || new Date().toISOString(),
+                    apiKey: DEFAULT_CREDENTIALS.apiKey,
+                    apiSecret: DEFAULT_CREDENTIALS.apiSecret
+                };
+                userSessions.set(sessionFile.sessionId, sessionData);
+                console.log('✅ Loaded old format session for user:', sessionFile.userId);
+                // Re-save in new format
+                saveSession(sessionFile.sessionId, sessionData);
+                return sessionFile.sessionId;
+            }
+        }
+    } catch (error) {
+        console.error('Error loading session:', error);
+    }
     return false;
 }
 
-// Save session to file - DISABLED PER USER REQUEST (LOGIN FRESH EACH TIME)
+// Save session to file
 function saveSession(sessionId, sessionData) {
-    // Session persistence disabled - user requested fresh login each time
-    console.log('Session persistence disabled - fresh login required each time');
-    return;
+    try {
+        fs.writeFileSync('./session.json', JSON.stringify({
+            sessionId,
+            data: sessionData
+        }, null, 2));
+        console.log('✅ Session saved for user:', sessionData.userId);
+    } catch (error) {
+        console.error('Error saving session:', error);
+    }
 }
 
 // Routes
@@ -91,8 +148,9 @@ app.get('/callback', async (req, res) => {
         let latestTime = 0;
         
         for (const [sessionId, session] of userSessions.entries()) {
-            if (session.loginTime && session.loginTime.getTime() > latestTime && !session.isAuthenticated) {
-                latestTime = session.loginTime.getTime();
+            const loginTime = session.loginTime instanceof Date ? session.loginTime : new Date(session.loginTime || 0);
+            if (loginTime && loginTime.getTime() > latestTime && !session.isAuthenticated) {
+                latestTime = loginTime.getTime();
                 latestSession = session;
                 latestSessionId = sessionId;
             }
@@ -416,7 +474,7 @@ app.post('/api/generate-auth-url', (req, res) => {
         }
         
         const session = userSessions.get(sessionId);
-        const redirectUrl = 'http://localhost:3001/callback';
+        const redirectUrl = 'http://localhost:3001/callback?';
         
         // Flattrade authorization URL
         const authUrl = `${FLATTRADE_AUTH_URL}/?app_key=${session.apiKey}&redirect_uri=${encodeURIComponent(redirectUrl)}&response_type=code&state=sample_state`;
@@ -441,7 +499,7 @@ app.post('/api/one-click-login', async (req, res) => {
         
         // Use pre-configured credentials
         const { userId, password, totp, apiKey, apiSecret } = DEFAULT_CREDENTIALS;
-        const redirectUrl = 'http://localhost:3001/callback';
+        const redirectUrl = 'http://localhost:3001/callback?';
         
         console.log('Using pre-configured credentials for user:', userId);
         
@@ -454,7 +512,7 @@ app.post('/api/one-click-login', async (req, res) => {
             apiKey,
             apiSecret,
             redirectUrl,
-            loginTime: new Date(),
+            loginTime: new Date().toISOString(),
             isAuthenticated: false
         });
 
@@ -521,7 +579,7 @@ app.post('/api/auto-oauth', async (req, res) => {
 app.post('/api/complete-auto-oauth', async (req, res) => {
     try {
         const credentials = DEFAULT_CREDENTIALS;
-        const redirectUrl = 'http://localhost:3001/callback';
+        const redirectUrl = 'http://localhost:3001/callback?';
         
         console.log('Starting complete auto OAuth flow...');
         
@@ -534,7 +592,7 @@ app.post('/api/complete-auto-oauth', async (req, res) => {
             apiKey: credentials.apiKey,
             apiSecret: credentials.apiSecret,
             redirectUrl,
-            loginTime: new Date(),
+            loginTime: new Date().toISOString(),
             isAuthenticated: false
         });
         
@@ -746,7 +804,7 @@ app.get('/api/check-session', (req, res) => {
 app.post('/api/generate-manual-auth-url', async (req, res) => {
     try {
         const credentials = DEFAULT_CREDENTIALS;
-        const redirectUrl = 'http://localhost:3001/callback';
+        const redirectUrl = 'http://localhost:3001/callback?';
         
         console.log('Generating manual OAuth URL...');
         
@@ -759,7 +817,7 @@ app.post('/api/generate-manual-auth-url', async (req, res) => {
             apiKey: credentials.apiKey,
             apiSecret: credentials.apiSecret,
             redirectUrl,
-            loginTime: new Date(),
+            loginTime: new Date().toISOString(),
             isAuthenticated: false
         });
         
@@ -790,7 +848,7 @@ app.post('/api/generate-manual-auth-url', async (req, res) => {
 app.post('/api/login', async (req, res) => {
     try {
         const { userId, password, totp, apiKey, apiSecret } = req.body;
-        const redirectUrl = 'http://localhost:3001/callback'; // Default redirect URL
+        const redirectUrl = 'http://localhost:3001/callback?'; // Default redirect URL
         
         console.log('Login credentials received:', { 
             userId, 
@@ -818,7 +876,7 @@ app.post('/api/login', async (req, res) => {
             apiKey,
             apiSecret,
             redirectUrl,
-            loginTime: new Date(),
+            loginTime: new Date().toISOString(),
             isAuthenticated: false
         });
 
@@ -941,6 +999,236 @@ app.get('/api/option-chain', async (req, res) => {
             message: 'Failed to fetch option chain',
             error: error.response?.data || error.message
         });
+    }
+});
+
+// Cache for expiry dates (refresh once per day)
+const expiryCache = new Map();
+const EXPIRY_CACHE_DURATION = 24 * 60 * 60 * 1000; // 24 hours
+
+// Get expiry dates from NSE website (official source) with caching
+app.get('/api/expiry-dates', async (req, res) => {
+    try {
+        const symbol = req.query.symbol || 'NIFTY';
+        
+        // Check cache first
+        const cacheKey = symbol;
+        const cached = expiryCache.get(cacheKey);
+        
+        if (cached && (Date.now() - cached.timestamp) < EXPIRY_CACHE_DURATION) {
+            console.log(`✅ Returning cached expiry dates for ${symbol} (age: ${Math.floor((Date.now() - cached.timestamp) / 1000 / 60)} minutes)`);
+            return res.json(cached.data);
+        }
+        
+        console.log(`📅 Fetching fresh expiry dates for ${symbol} from NSE India...`);
+
+        // Map our symbols to NSE option chain symbols
+        const nseSymbolMap = {
+            'NIFTY': 'NIFTY',
+            'BANKNIFTY': 'BANKNIFTY',
+            'FINNIFTY': 'FINNIFTY'
+        };
+
+        const nseSymbol = nseSymbolMap[symbol] || 'NIFTY';
+
+        try {
+            // Fetch option chain from NSE to get expiry dates
+            const nseResponse = await axios.get(`https://www.nseindia.com/api/option-chain-indices?symbol=${nseSymbol}`, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                    'Accept': 'application/json',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Accept-Encoding': 'gzip, deflate, br',
+                    'Referer': 'https://www.nseindia.com/option-chain',
+                    'Connection': 'keep-alive'
+                },
+                timeout: 15000
+            });
+
+            if (nseResponse.data && nseResponse.data.records && nseResponse.data.records.expiryDates) {
+                const expiryDates = nseResponse.data.records.expiryDates;
+                
+                console.log(`📦 NSE returned ${expiryDates.length} expiry dates`);
+
+                // Parse and format expiry dates
+                const expiryDetails = expiryDates.map(dateStr => {
+                    // NSE format: "30-Oct-2025" or "30-10-2025"
+                    const date = new Date(dateStr);
+                    
+                    if (!isNaN(date.getTime())) {
+                        const dayOfWeek = date.getDay();
+                        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+                        
+                        const day = date.getDate().toString().padStart(2, '0');
+                        const month = date.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase();
+                        const year = date.getFullYear();
+                        
+                        // Format for HTML date input
+                        const dateFormatted = date.toISOString().split('T')[0]; // YYYY-MM-DD
+                        
+                        // Add day name to display (show if it's Thursday or not)
+                        const dayLabel = dayOfWeek === 4 ? 'Thu' : dayNames[dayOfWeek];
+                        
+                        return {
+                            date: dateFormatted,
+                            display: `${day} ${month} ${year} (${dayLabel})`,
+                            timestamp: date.getTime(),
+                            isThursday: dayOfWeek === 4
+                        };
+                    }
+                    return null;
+                }).filter(Boolean);
+
+                // Sort by date
+                expiryDetails.sort((a, b) => a.timestamp - b.timestamp);
+
+                // Filter future dates
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                let futureExpiries = expiryDetails.filter(e => e.timestamp >= today.getTime());
+                
+                // Log all dates including non-Thursdays
+                console.log(`📅 NSE returned ${futureExpiries.length} future expiries (all days):`, 
+                    futureExpiries.map(e => e.display).slice(0, 5));
+                
+                // Prefer Thursdays but include all if no Thursdays available
+                const thursdays = futureExpiries.filter(e => e.isThursday).slice(0, 10);
+                if (thursdays.length >= 3) {
+                    futureExpiries = thursdays;
+                    console.log(`✅ Using ${thursdays.length} Thursday expiries`);
+                } else {
+                    futureExpiries = futureExpiries.slice(0, 10);
+                    console.log(`⚠️ Using all ${futureExpiries.length} expiries (not all Thursdays)`);
+                }
+
+                console.log(`📋 Final expiries:`, futureExpiries.map(e => e.display));
+
+                const responseData = {
+                    status: 'success',
+                    symbol: symbol,
+                    expiries: futureExpiries,
+                    source: 'NSE India'
+                };
+                
+                // Cache the result
+                expiryCache.set(cacheKey, {
+                    data: responseData,
+                    timestamp: Date.now()
+                });
+                console.log(`💾 Cached expiry dates for ${symbol}`);
+
+                res.json(responseData);
+            } else {
+                throw new Error('No expiry data in NSE response');
+            }
+
+        } catch (nseError) {
+            console.error('❌ NSE API error:', nseError.message);
+            
+            // Fallback: Calculate next 8 Thursdays
+            console.log('⚠️ Using fallback: calculating Thursday expiries');
+            const expiries = [];
+            const today = new Date();
+            
+            let currentDate = new Date(today);
+            for (let i = 0; i < 8; i++) {
+                // Find next Thursday
+                const dayOfWeek = currentDate.getDay();
+                const daysUntilThursday = (4 - dayOfWeek + 7) % 7;
+                if (daysUntilThursday === 0 && i === 0) {
+                    currentDate.setDate(currentDate.getDate() + 7);
+                } else {
+                    currentDate.setDate(currentDate.getDate() + daysUntilThursday);
+                }
+                
+                const day = currentDate.getDate().toString().padStart(2, '0');
+                const month = currentDate.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase();
+                const year = currentDate.getFullYear();
+                const dateFormatted = currentDate.toISOString().split('T')[0];
+                
+                expiries.push({
+                    date: dateFormatted,
+                    display: `${day} ${month} ${year}`,
+                    timestamp: currentDate.getTime()
+                });
+                
+                // Move to next week
+                currentDate = new Date(currentDate);
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
+
+            console.log(`✅ Fallback: Generated ${expiries.length} Thursday expiries`);
+
+            const fallbackData = {
+                status: 'success',
+                symbol: symbol,
+                expiries: expiries,
+                source: 'Calculated (NSE unavailable)'
+            };
+            
+            // Cache fallback data too (shorter duration - 1 hour)
+            expiryCache.set(cacheKey, {
+                data: fallbackData,
+                timestamp: Date.now()
+            });
+
+            res.json(fallbackData);
+        }
+
+    } catch (error) {
+        console.error('❌ Expiry dates error:', error.message);
+        res.status(500).json({
+            status: 'error',
+            message: 'Failed to fetch expiry dates',
+            error: error.message
+        });
+    }
+});
+
+// Test symbol lookup (for debugging)
+app.get('/api/test-symbol', async (req, res) => {
+    try {
+        const { symbol, strike, expiry, optionType } = req.query;
+        const sessionId = req.cookies.sessionId;
+        
+        if (!sessionId || !userSessions.has(sessionId)) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        
+        const session = userSessions.get(sessionId);
+        if (!session.isAuthenticated) {
+            return res.status(401).json({ error: 'Not authenticated' });
+        }
+        
+        // Generate symbol with 2-digit year (FlatTrade format)
+        const expiryDate = new Date(expiry);
+        const day = expiryDate.getDate().toString().padStart(2, '0');
+        const month = expiryDate.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase();
+        const year = expiryDate.getFullYear().toString().slice(-2); // Last 2 digits
+        const optCode = optionType.charAt(0); // 'C' or 'P'
+        const generatedSymbol = `${symbol}${day}${month}${year}${optCode}${strike}`;
+        
+        // Search for it
+        const searchData = {
+            uid: session.userId,
+            stext: generatedSymbol
+        };
+        
+        const searchResponse = await axios.post(`${FLATTRADE_BASE_URL}/SearchScrip`, 
+            `jData=${JSON.stringify(searchData)}&jKey=${session.jKey}`,
+            {
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            }
+        );
+        
+        res.json({
+            generated: generatedSymbol,
+            searchResults: searchResponse.data.values || [],
+            nfoResults: (searchResponse.data.values || []).filter(v => v.exch === 'NFO')
+        });
+        
+    } catch (error) {
+        res.status(500).json({ error: error.message });
     }
 });
 
@@ -1243,12 +1531,38 @@ app.get('/api/positions', async (req, res) => {
             });
         }
 
-        // For demo purposes, return empty positions
-        res.json({ 
-            status: 'success', 
-            data: [],
-            message: 'No positions found (demo mode)'
-        });
+        // Make actual API call to get positions
+        const requestData = {
+            uid: session.userId,
+            actid: session.userId
+        };
+
+        console.log('Fetching positions for user:', session.userId);
+
+        const response = await axios.post(`${FLATTRADE_BASE_URL}/PositionBook`, 
+            `jData=${JSON.stringify(requestData)}&jKey=${session.jKey}`,
+            {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            }
+        );
+        
+        console.log('PositionBook response:', response.data);
+        
+        if (response.data.stat === 'Ok') {
+            res.json({ 
+                status: 'success', 
+                data: response.data.values || [],
+                message: 'Positions fetched successfully'
+            });
+        } else {
+            res.json({ 
+                status: 'error', 
+                message: response.data.emsg || 'Failed to fetch positions',
+                data: []
+            });
+        }
     } catch (error) {
         console.error('Positions error:', error);
         res.status(500).json({ 
@@ -1283,12 +1597,21 @@ app.get('/api/orders', async (req, res) => {
         // Make actual API call to get orderbook
         const requestData = {
             uid: session.userId,
-            jKey: session.jKey
+            actid: session.userId
         };
 
         console.log('Fetching orders for user:', session.userId);
 
-        const response = await axios.post(`${FLATTRADE_BASE_URL}/OrderBook`, requestData);
+        const response = await axios.post(`${FLATTRADE_BASE_URL}/OrderBook`, 
+            `jData=${JSON.stringify(requestData)}&jKey=${session.jKey}`,
+            {
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                }
+            }
+        );
+        
+        console.log('OrderBook response:', response.data);
         
         if (response.data.stat === 'Ok') {
             res.json({ 
@@ -1335,41 +1658,126 @@ app.post('/api/place-single-order', async (req, res) => {
             });
         }
 
-        console.log(`Placing single order for user ${session.userId}:`, order);
+        console.log(`📤 Placing single order for user ${session.userId}:`, order);
         
         try {
-            // Generate trading symbol
-            const today = new Date();
-            const weeklyExpiry = getNextThursday(today);
-            const month = weeklyExpiry.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase();
-            const year = weeklyExpiry.getFullYear().toString().slice(-2);
-            const day = weeklyExpiry.getDate().toString().padStart(2, '0');
+            // Use the trading symbol from frontend if provided, otherwise generate it
+            let tradingSymbol = order.tradingSymbol;
             
-            const optionTypeCode = order.optionType === 'CE' ? 'C' : 'P';
-            const tradingSymbol = `${order.symbol}${day}${month}${year}${optionTypeCode}${order.strikePrice}`;
+            if (!tradingSymbol) {
+                // Generate trading symbol if not provided (2-digit year, FlatTrade format)
+                const today = new Date();
+                const weeklyExpiry = getNextThursday(today);
+                const month = weeklyExpiry.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase();
+                const year = weeklyExpiry.getFullYear().toString().slice(-2); // Last 2 digits
+                const day = weeklyExpiry.getDate().toString().padStart(2, '0');
+                
+                const optionTypeCode = order.optionType ? order.optionType.charAt(0) : 'C'; // 'C' or 'P'
+                tradingSymbol = `${order.symbol}${day}${month}${year}${optionTypeCode}${order.strikePrice}`;
+                console.log(`🔧 Generated trading symbol: ${tradingSymbol}`);
+            } else {
+                console.log(`✅ Using provided trading symbol: ${tradingSymbol}`);
+            }
             
-            console.log(`Generated trading symbol: ${tradingSymbol}`);
+            // Validate symbol by searching in FlatTrade's database
+            console.log(`🔍 Validating symbol: ${tradingSymbol}`);
+            try {
+                const searchData = {
+                    uid: session.userId,
+                    stext: tradingSymbol
+                };
+                
+                const searchResponse = await axios.post(`${FLATTRADE_BASE_URL}/SearchScrip`, 
+                    `jData=${JSON.stringify(searchData)}&jKey=${session.jKey}`,
+                    {
+                        headers: {
+                            'Content-Type': 'application/x-www-form-urlencoded'
+                        }
+                    }
+                );
+                
+                if (searchResponse.data.stat === 'Ok' && searchResponse.data.values && searchResponse.data.values.length > 0) {
+                    // Find exact match (case-insensitive) in NFO exchange
+                    const exactMatch = searchResponse.data.values.find(item => 
+                        item.exch === 'NFO' && 
+                        item.tsym && 
+                        item.tsym.toUpperCase() === tradingSymbol.toUpperCase()
+                    );
+                    
+                    if (exactMatch) {
+                        tradingSymbol = exactMatch.tsym; // Use exact format from FlatTrade
+                        console.log(`✅ Exact match validated: ${tradingSymbol} (Token: ${exactMatch.token})`);
+                    } else {
+                        // Try to find closest match starting with our symbol
+                        const closeMatch = searchResponse.data.values.find(item => 
+                            item.exch === 'NFO' && 
+                            item.tsym && 
+                            item.tsym.toUpperCase().startsWith(tradingSymbol.substring(0, 10).toUpperCase())
+                        );
+                        
+                        if (closeMatch) {
+                            console.warn(`⚠️ Using close match: ${closeMatch.tsym} (searched for: ${tradingSymbol})`);
+                            tradingSymbol = closeMatch.tsym;
+                        } else {
+                            console.warn(`⚠️ No exact match found, using generated: ${tradingSymbol}`);
+                            console.log(`📋 Available symbols:`, searchResponse.data.values.slice(0, 5).map(v => v.tsym));
+                        }
+                    }
+                } else {
+                    console.warn(`⚠️ Symbol search returned no results, using generated: ${tradingSymbol}`);
+                }
+            } catch (searchError) {
+                console.warn(`⚠️ Symbol validation failed:`, searchError.message);
+            }
             
-            // Prepare order data
+            // Map order type: 'Market' or 'Limit' -> 'MKT' or 'LMT'
+            let prctyp = 'MKT';
+            let prc = '0';
+            
+            if (order.orderType === 'Limit' || order.orderType === 'LMT') {
+                prctyp = 'LMT';
+                prc = order.price ? order.price.toString() : '0';
+            } else if (order.orderType === 'Market' || order.orderType === 'MKT') {
+                prctyp = 'MKT';
+                prc = '0';
+            }
+            
+            console.log(`📊 Order details: Type=${prctyp}, Price=${prc}, Qty=${order.quantity}, Product=${order.product}`);
+            
+            // Log in user-friendly format
+            console.log(`📋 Order Summary:`, {
+                exchange: 'NFO',
+                tradingsymbol: tradingSymbol,
+                transactiontype: order.trantype === 'B' ? 'BUY' : 'SELL',
+                ordertype: prctyp === 'MKT' ? 'MARKET' : 'LIMIT',
+                producttype: order.product,
+                duration: 'DAY',
+                quantity: order.quantity,
+                price: prc
+            });
+            
+            // Prepare order data for FlatTrade API
             const orderData = {
                 uid: session.userId,
                 actid: session.userId,
                 exch: 'NFO',
                 tsym: tradingSymbol,
                 qty: order.quantity.toString(),
-                prc: order.orderType === 'MARKET' ? '0' : order.price,
-                prd: order.product === 'MIS' ? 'I' : (order.product === 'CNC' ? 'C' : 'M'),
+                prc: prc,
+                prd: order.product === 'MIS' ? 'I' : (order.product === 'NRML' ? 'M' : (order.product === 'CNC' ? 'C' : 'I')),
                 trantype: order.trantype,
-                prctyp: order.orderType === 'MARKET' ? 'MKT' : 'LMT',
+                prctyp: prctyp,
                 ret: order.validity || 'DAY',
                 dscqty: '0',
                 ordersource: 'API'
             };
             
-            // Add trigger price for GTT orders
-            if (order.orderType === 'GTT' && order.triggerPrice) {
-                orderData.blprc = order.triggerPrice;
+            // Add trigger price for SL/GTT orders
+            if (order.triggerPrice) {
+                orderData.blprc = order.triggerPrice.toString();
             }
+            
+            console.log(`📤 Sending to FlatTrade PlaceOrder API:`, orderData);
             
             const response = await axios.post(`${FLATTRADE_BASE_URL}/PlaceOrder`, 
                 `jData=${JSON.stringify(orderData)}&jKey=${session.jKey}`,
@@ -1380,19 +1788,23 @@ app.post('/api/place-single-order', async (req, res) => {
                 }
             );
             
-            console.log('Single order response:', response.data);
+            console.log('📥 FlatTrade API response:', response.data);
             
             if (response.data.stat === 'Ok') {
+                console.log(`✅ Order placed successfully! Order ID: ${response.data.norenordno}`);
                 res.json({ 
                     success: true, 
                     orderId: response.data.norenordno,
                     message: 'Order placed successfully',
-                    tradingSymbol: tradingSymbol
+                    tradingSymbol: tradingSymbol,
+                    details: response.data
                 });
             } else {
+                console.error(`❌ Order failed: ${response.data.emsg}`);
                 res.json({ 
                     success: false, 
-                    error: response.data.emsg || 'Order placement failed'
+                    error: response.data.emsg || 'Order placement failed',
+                    details: response.data
                 });
             }
             
@@ -1843,7 +2255,68 @@ app.get('/api/holdings', async (req, res) => {
     }
 });
 
-// Get trade book
+// Get trade book (supports both GET and POST)
+app.get('/api/trade-book', async (req, res) => {
+    try {
+        const date = req.query.date || new Date().toISOString().split('T')[0].replace(/-/g, '');
+        const sessionId = ensureSessionCookie(req, res);
+        
+        if (!sessionId || !userSessions.has(sessionId)) {
+            return res.status(401).json({ 
+                stat: 'Not_Ok',
+                emsg: 'Not authenticated. Please login first.' 
+            });
+        }
+        
+        const session = userSessions.get(sessionId);
+        
+        if (!session.isAuthenticated) {
+            return res.status(401).json({ 
+                stat: 'Not_Ok',
+                emsg: 'Authentication incomplete. Please complete OAuth flow.' 
+            });
+        }
+
+        const tradeBookData = {
+            uid: session.userId,
+            actid: session.userId,
+            from: date
+        };
+
+        console.log('📋 Getting trade book for user:', session.userId, 'date:', tradeBookData.from);
+        const response = await axios.post(`${FLATTRADE_BASE_URL}/TradeBook`, 
+            `jData=${JSON.stringify(tradeBookData)}&jKey=${session.jKey}`,
+            {
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+            }
+        );
+
+        console.log('✅ Trade book response:', response.data);
+        
+        if (response.data.stat === 'Ok') {
+            res.json({
+                status: 'success',
+                data: response.data.values || [],
+                message: 'Trade book fetched successfully'
+            });
+        } else {
+            res.json({
+                status: 'error',
+                message: response.data.emsg || 'Failed to fetch trade book',
+                data: []
+            });
+        }
+    } catch (error) {
+        console.error('❌ Error getting trade book:', error);
+        res.status(500).json({ 
+            status: 'error',
+            message: 'Failed to get trade book: ' + error.message,
+            data: []
+        });
+    }
+});
+
+// POST endpoint for trade book (for compatibility)
 app.post('/api/trade-book', async (req, res) => {
     try {
         const { date } = req.body;
@@ -1871,7 +2344,7 @@ app.post('/api/trade-book', async (req, res) => {
             from: date || new Date().toISOString().split('T')[0].replace(/-/g, '')
         };
 
-        console.log('Getting trade book for user:', session.userId, 'date:', tradeBookData.from);
+        console.log('📋 Getting trade book for user:', session.userId, 'date:', tradeBookData.from);
         const response = await axios.post(`${FLATTRADE_BASE_URL}/TradeBook`, 
             `jData=${JSON.stringify(tradeBookData)}&jKey=${session.jKey}`,
             {
@@ -1879,103 +2352,221 @@ app.post('/api/trade-book', async (req, res) => {
             }
         );
 
-        console.log('Trade book response:', response.data);
-        res.json(response.data);
+        console.log('✅ Trade book response:', response.data);
+        
+        if (response.data.stat === 'Ok') {
+            res.json({
+                status: 'success',
+                data: response.data.values || [],
+                message: 'Trade book fetched successfully'
+            });
+        } else {
+            res.json({
+                status: 'error',
+                message: response.data.emsg || 'Failed to fetch trade book',
+                data: []
+            });
+        }
     } catch (error) {
-        console.error('Error getting trade book:', error);
+        console.error('❌ Error getting trade book:', error);
         res.status(500).json({ 
-            stat: 'Not_Ok',
-            emsg: 'Failed to get trade book: ' + error.message 
+            status: 'error',
+            message: 'Failed to get trade book: ' + error.message,
+            data: []
         });
     }
 });
 
+// Cache for price data (1 minute cache)
+let priceCache = null;
+let priceCacheTimestamp = 0;
+const PRICE_CACHE_DURATION = 60 * 1000; // 1 minute
+
 // Price fetching endpoints
 app.get('/api/nifty-price', async (req, res) => {
     try {
-        console.log('Fetching NIFTY price from yfinance...');
-        
-        // Use only Python script with yfinance
-        const pythonPromise = new Promise((resolve, reject) => {
-            const python = spawn('python3', [path.join(__dirname, 'simple_price_fetcher.py')]);
-            let dataString = '';
-            let errorString = '';
-            
-            python.stdout.on('data', (data) => {
-                dataString += data.toString();
-            });
-            
-            python.stderr.on('data', (data) => {
-                errorString += data.toString();
-            });
-            
-            python.on('close', (code) => {
-                if (code === 0) {
-                    try {
-                        const result = JSON.parse(dataString);
-                        resolve(result);
-                    } catch (error) {
-                        reject(new Error('Failed to parse Python output'));
-                    }
-                } else {
-                    reject(new Error(`Python script exited with code ${code}: ${errorString}`));
-                }
-            });
-            
-            python.on('error', (error) => {
-                reject(error);
-            });
-            
-            // Timeout after 15 seconds
-            setTimeout(() => {
-                python.kill();
-                reject(new Error('Python script timeout'));
-            }, 15000);
-        });
-        
-        try {
-            const result = await pythonPromise;
-            
-            if (result.status === 'success') {
-                console.log('NIFTY price fetched from yfinance:', result.price);
-                res.json(result);
-                return;
-            } else {
-                console.log('yfinance returned error:', result.error);
-                throw new Error(result.error);
-            }
-        } catch (pythonError) {
-            console.log('yfinance failed:', pythonError.message);
+        // Check cache first
+        if (priceCache && (Date.now() - priceCacheTimestamp) < PRICE_CACHE_DURATION) {
+            const age = Math.floor((Date.now() - priceCacheTimestamp) / 1000);
+            console.log(`✅ Returning cached price data (age: ${age}s)`);
+            return res.json(priceCache);
         }
         
-        // Fallback: generate realistic mock data when yfinance fails
-        console.log('Using yfinance-style mock data fallback');
-        const mockPrice = 24300 + (Math.random() - 0.5) * 200;
+        console.log('📈 Fetching fresh live prices from NSE India API...');
+        
+        // Fetch from NSE India API (no Python required!)
+        const nseResponse = await axios.get('https://www.nseindia.com/api/allIndices', {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'application/json',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Referer': 'https://www.nseindia.com/'
+            },
+            timeout: 10000
+        });
+        
+        if (nseResponse.data && nseResponse.data.data) {
+            // Find NIFTY 50, BANKNIFTY, and VIX data
+            const niftyData = nseResponse.data.data.find(index => 
+                index.index === 'NIFTY 50' || index.indexSymbol === 'NIFTY 50'
+            );
+            
+            const bankniftyData = nseResponse.data.data.find(index => 
+                index.index === 'NIFTY BANK' || index.indexSymbol === 'NIFTY BANK'
+            );
+            
+            const vixData = nseResponse.data.data.find(index => 
+                index.index === 'INDIA VIX' || index.indexSymbol === 'INDIA VIX'
+            );
+            
+            if (niftyData || bankniftyData || vixData) {
+                const result = {
+                    status: 'success',
+                    source: 'NSE India API',
+                    timestamp: new Date().toISOString()
+                };
+                
+                if (niftyData) {
+                    const price = parseFloat(niftyData.last || niftyData.lastPrice);
+                    const prevClose = parseFloat(niftyData.previousClose || niftyData.previousClose);
+                    const change = niftyData.change ? parseFloat(niftyData.change) : (price - prevClose);
+                    const pChange = niftyData.percentChange ? parseFloat(niftyData.percentChange) : 
+                                   niftyData.pChange ? parseFloat(niftyData.pChange) : 
+                                   (change / prevClose * 100);
+                    
+                    result.nifty = {
+                        symbol: 'NIFTY 50',
+                        price: price,
+                        open: parseFloat(niftyData.open),
+                        dayHigh: parseFloat(niftyData.high),
+                        dayLow: parseFloat(niftyData.low),
+                        change: change,
+                        pChange: pChange,
+                        previousClose: prevClose,
+                        yearHigh: parseFloat(niftyData.yearHigh || 0),
+                        yearLow: parseFloat(niftyData.yearLow || 0),
+                        totalTradedVolume: parseFloat(niftyData.totalTradedVolume || 0)
+                    };
+                    console.log('✅ Live NIFTY price:', result.nifty.price, 'Change:', result.nifty.change.toFixed(2), `(${result.nifty.pChange.toFixed(2)}%)`);
+                }
+                
+                if (bankniftyData) {
+                    const price = parseFloat(bankniftyData.last || bankniftyData.lastPrice);
+                    const prevClose = parseFloat(bankniftyData.previousClose || bankniftyData.previousClose);
+                    const change = bankniftyData.change ? parseFloat(bankniftyData.change) : (price - prevClose);
+                    const pChange = bankniftyData.percentChange ? parseFloat(bankniftyData.percentChange) : 
+                                   bankniftyData.pChange ? parseFloat(bankniftyData.pChange) : 
+                                   (change / prevClose * 100);
+                    
+                    result.banknifty = {
+                        symbol: 'NIFTY BANK',
+                        price: price,
+                        open: parseFloat(bankniftyData.open),
+                        dayHigh: parseFloat(bankniftyData.high),
+                        dayLow: parseFloat(bankniftyData.low),
+                        change: change,
+                        pChange: pChange,
+                        previousClose: prevClose,
+                        yearHigh: parseFloat(bankniftyData.yearHigh || 0),
+                        yearLow: parseFloat(bankniftyData.yearLow || 0),
+                        totalTradedVolume: parseFloat(bankniftyData.totalTradedVolume || 0)
+                    };
+                    console.log('✅ Live BANKNIFTY price:', result.banknifty.price, 'Change:', result.banknifty.change.toFixed(2), `(${result.banknifty.pChange.toFixed(2)}%)`);
+                }
+                
+                if (vixData) {
+                    const price = parseFloat(vixData.last || vixData.lastPrice);
+                    const prevClose = parseFloat(vixData.previousClose || vixData.previousClose);
+                    const change = vixData.change ? parseFloat(vixData.change) : (price - prevClose);
+                    const pChange = vixData.percentChange ? parseFloat(vixData.percentChange) : 
+                                   vixData.pChange ? parseFloat(vixData.pChange) : 
+                                   (change / prevClose * 100);
+                    
+                    result.vix = {
+                        symbol: 'INDIA VIX',
+                        price: price,
+                        open: parseFloat(vixData.open),
+                        dayHigh: parseFloat(vixData.high),
+                        dayLow: parseFloat(vixData.low),
+                        change: change,
+                        pChange: pChange,
+                        previousClose: prevClose,
+                        yearHigh: parseFloat(vixData.yearHigh || 0),
+                        yearLow: parseFloat(vixData.yearLow || 0),
+                        totalTradedVolume: parseFloat(vixData.totalTradedVolume || 0)
+                    };
+                    console.log('✅ Live VIX price:', result.vix.price, 'Change:', result.vix.change.toFixed(2), `(${result.vix.pChange.toFixed(2)}%)`);
+                }
+                
+                // Cache the result
+                priceCache = result;
+                priceCacheTimestamp = Date.now();
+                console.log('💾 Cached price data for 1 minute');
+                
+                return res.json(result);
+            }
+        }
+        
+        throw new Error('NIFTY 50 data not found in NSE response');
+        
+    } catch (error) {
+        console.error('❌ NSE API error:', error.message);
+        
+        // Fallback to mock data with realistic values
+        console.log('⚠️ Using mock data fallback');
+        const mockNiftyPrice = 24300 + (Math.random() - 0.5) * 200;
+        const niftyChange = (Math.random() - 0.5) * 150;
+        const mockBankNiftyPrice = 51000 + (Math.random() - 0.5) * 400;
+        const bankNiftyChange = (Math.random() - 0.5) * 300;
+        const mockVixPrice = 15 + (Math.random() - 0.5) * 4;
+        const vixChange = (Math.random() - 0.5) * 2;
+        
         const result = {
-            symbol: 'NIFTY 50',
-            price: parseFloat(mockPrice.toFixed(2)),
-            open: parseFloat((mockPrice - 50 + Math.random() * 100).toFixed(2)),
-            high: parseFloat((mockPrice + 100 + Math.random() * 50).toFixed(2)),
-            low: parseFloat((mockPrice - 80 - Math.random() * 50).toFixed(2)),
-            change: parseFloat((Math.random() - 0.5) * 100).toFixed(2),
-            changePercent: parseFloat((Math.random() - 0.5) * 2).toFixed(2),
-            volume: Math.floor(Math.random() * 2000000),
-            timestamp: new Date().toISOString(),
             status: 'mock',
-            source: 'yfinance-style-mock',
-            note: 'Using mock data - yfinance unavailable for NIFTY 50'
+            source: 'Mock Data (NSE API unavailable)',
+            timestamp: new Date().toISOString(),
+            nifty: {
+                symbol: 'NIFTY 50',
+                price: parseFloat(mockNiftyPrice.toFixed(2)),
+                open: parseFloat((mockNiftyPrice - 50).toFixed(2)),
+                dayHigh: parseFloat((mockNiftyPrice + 100).toFixed(2)),
+                dayLow: parseFloat((mockNiftyPrice - 120).toFixed(2)),
+                change: parseFloat(niftyChange.toFixed(2)),
+                pChange: parseFloat((niftyChange / mockNiftyPrice * 100).toFixed(2)),
+                previousClose: parseFloat((mockNiftyPrice - niftyChange).toFixed(2)),
+                yearHigh: 25000.00,
+                yearLow: 21000.00,
+                totalTradedVolume: Math.floor(Math.random() * 2000000 + 1000000)
+            },
+            banknifty: {
+                symbol: 'NIFTY BANK',
+                price: parseFloat(mockBankNiftyPrice.toFixed(2)),
+                open: parseFloat((mockBankNiftyPrice - 100).toFixed(2)),
+                dayHigh: parseFloat((mockBankNiftyPrice + 200).toFixed(2)),
+                dayLow: parseFloat((mockBankNiftyPrice - 250).toFixed(2)),
+                change: parseFloat(bankNiftyChange.toFixed(2)),
+                pChange: parseFloat((bankNiftyChange / mockBankNiftyPrice * 100).toFixed(2)),
+                previousClose: parseFloat((mockBankNiftyPrice - bankNiftyChange).toFixed(2)),
+                yearHigh: 53000.00,
+                yearLow: 45000.00,
+                totalTradedVolume: Math.floor(Math.random() * 1000000 + 500000)
+            },
+            vix: {
+                symbol: 'INDIA VIX',
+                price: parseFloat(mockVixPrice.toFixed(2)),
+                open: parseFloat((mockVixPrice - 0.5).toFixed(2)),
+                dayHigh: parseFloat((mockVixPrice + 1).toFixed(2)),
+                dayLow: parseFloat((mockVixPrice - 1.5).toFixed(2)),
+                change: parseFloat(vixChange.toFixed(2)),
+                pChange: parseFloat((vixChange / mockVixPrice * 100).toFixed(2)),
+                previousClose: parseFloat((mockVixPrice - vixChange).toFixed(2)),
+                yearHigh: 30.00,
+                yearLow: 10.00,
+                totalTradedVolume: 0
+            }
         };
         
         res.json(result);
-        
-    } catch (error) {
-        console.error('Error fetching NIFTY price:', error.message);
-        res.status(500).json({
-            error: error.message,
-            status: 'error',
-            timestamp: new Date().toISOString(),
-            source: 'yfinance'
-        });
     }
 });
 

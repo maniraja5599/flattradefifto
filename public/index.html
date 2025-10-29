@@ -3,453 +3,530 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flattrade Trading Interface</title>
+    <title>Flattrade Fast Trader</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
         body {
-            background: linear-gradient(135deg, #2c3e50 0%, #34495e 100%);
-            min-height: 100vh;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background:#0a0e27; 
+            color:#e2e8f0; 
+            font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;
+            overflow-x:hidden;
         }
         
-        .trading-card {
-            backdrop-filter: blur(10px);
-            background: rgba(255, 255, 255, 0.98);
-            border-radius: 20px;
-            box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.3);
+        /* Topbar */
+        .topbar { 
+            background:#0f172a; 
+            border-bottom:1px solid #1e293b; 
+            position:sticky; 
+            top:0; 
+            z-index:1000;
+            padding:12px 20px;
+        }
+        .topbar .logo { font-size:20px; font-weight:700; color:#10b981; }
+        .topbar input { 
+            background:#1e293b; 
+            border:1px solid #334155; 
+            color:#e2e8f0; 
+            border-radius:6px;
+            padding:6px 12px;
+        }
+        .topbar input:focus { outline:none; border-color:#3b82f6; }
+        
+        /* Sidebar */
+        .sidebar { 
+            background:#0f172a; 
+            width:220px; 
+            border-right:1px solid #1e293b; 
+            position:fixed; 
+            left:0; 
+            top:60px; 
+            height:calc(100vh - 60px);
+            overflow-y:auto;
+            padding:16px;
+        }
+        .sidebar a { 
+            display:block; 
+            padding:10px 14px; 
+            border-radius:6px; 
+            color:#94a3b8; 
+            text-decoration:none; 
+            margin-bottom:6px;
+            transition:all 0.2s;
+        }
+        .sidebar a:hover, .sidebar a.active { 
+            background:#1e293b; 
+            color:#10b981; 
         }
         
-        .order-form {
-            background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
-            border-radius: 20px;
-            padding: 35px;
-            color: white;
-            box-shadow: 0 10px 30px rgba(52, 152, 219, 0.3);
+        /* Main */
+        .main-container { 
+            margin-left:220px; 
+            padding:20px; 
+            padding-top:80px;
         }
         
-        .btn-trade {
-            background: linear-gradient(45deg, #e74c3c, #c0392b);
-            border: none;
-            border-radius: 30px;
-            padding: 15px 35px;
-            font-weight: bold;
-            text-transform: uppercase;
-            letter-spacing: 1.5px;
-            transition: all 0.3s ease;
-            box-shadow: 0 8px 25px rgba(231, 76, 60, 0.3);
+        /* Cards */
+        .card-modern { 
+            background:#0f172a; 
+            border:1px solid #1e293b; 
+            border-radius:12px; 
+            padding:20px;
+            margin-bottom:20px;
+        }
+        .card-header-modern { 
+            display:flex; 
+            justify-content:space-between; 
+            align-items:center; 
+            margin-bottom:16px;
+            padding-bottom:12px;
+            border-bottom:1px solid #1e293b;
         }
         
-        .btn-trade:hover {
-            transform: translateY(-3px);
-            box-shadow: 0 12px 35px rgba(231, 76, 60, 0.4);
-            background: linear-gradient(45deg, #c0392b, #a93226);
+        /* Price Ticker */
+        .price-ticker { 
+            background:linear-gradient(135deg, #1e293b 0%, #0f172a 100%); 
+            border:1px solid #334155;
+            border-radius:10px;
+            padding:20px;
+            display:flex;
+            justify-content:space-around;
+            margin-bottom:20px;
+        }
+        .price-ticker .item { text-align:center; }
+        .price-ticker .value { font-size:28px; font-weight:700; }
+        .price-ticker .label { font-size:12px; color:#64748b; margin-top:4px; }
+        .price-up { color:#10b981; }
+        .price-down { color:#ef4444; }
+        
+        /* Buy/Sell Buttons */
+        .btn-buy { 
+            background:#10b981; 
+            color:#fff; 
+            border:none; 
+            border-radius:8px; 
+            padding:12px 24px; 
+            font-weight:600;
+            transition:all 0.2s;
+        }
+        .btn-buy:hover { background:#059669; transform:translateY(-1px); }
+        .btn-sell { 
+            background:#ef4444; 
+            color:#fff; 
+            border:none; 
+            border-radius:8px; 
+            padding:12px 24px; 
+            font-weight:600;
+            transition:all 0.2s;
+        }
+        .btn-sell:hover { background:#dc2626; transform:translateY(-1px); }
+        
+        /* Form Controls */
+        .form-control-modern { 
+            background:#1e293b; 
+            border:1px solid #334155; 
+            color:#e2e8f0; 
+            border-radius:8px;
+            padding:10px 14px;
+        }
+        .form-control-modern:focus { 
+            outline:none; 
+            border-color:#3b82f6; 
+            background:#0f172a;
+        }
+        .form-select-modern { 
+            background:#1e293b; 
+            border:1px solid #334155; 
+            color:#e2e8f0; 
+            border-radius:8px;
+            padding:10px 14px;
+        }
+        .form-select-modern:focus { outline:none; border-color:#3b82f6; }
+        
+        /* Strike Pills */
+        .strike-pills { 
+            display:flex; 
+            gap:8px; 
+            flex-wrap:wrap; 
+            justify-content:center;
+            margin:16px 0;
+        }
+        .strike-pill { 
+            background:#1e293b; 
+            border:1px solid #334155; 
+            border-radius:20px; 
+            padding:8px 16px; 
+            color:#94a3b8; 
+            cursor:pointer;
+            transition:all 0.2s;
+        }
+        .strike-pill:hover { 
+            border-color:#3b82f6; 
+            background:#334155; 
+            color:#e2e8f0;
+        }
+        .strike-pill.active { 
+            background:#3b82f6; 
+            border-color:#3b82f6; 
+            color:#fff;
         }
         
-        .form-control, .form-select {
-            border-radius: 12px;
-            border: 2px solid rgba(255, 255, 255, 0.6);
-            background: rgba(255, 255, 255, 0.95);
-            color: #2c3e50;
-            backdrop-filter: blur(5px);
-            font-weight: 500;
-            padding: 12px 15px;
+        /* Basket */
+        .basket-item { 
+            background:#1e293b; 
+            border:1px solid #334155; 
+            border-radius:8px; 
+            padding:12px 16px;
+            margin-bottom:10px;
+            display:flex;
+            justify-content:space-between;
+            align-items:center;
+        }
+        .basket-item .action { font-weight:700; }
+        .basket-item .action.buy { color:#10b981; }
+        .basket-item .action.sell { color:#ef4444; }
+        
+        /* Table */
+        .table-modern { 
+            width:100%; 
+            font-size:13px;
+        }
+        .table-modern th { 
+            background:#1e293b; 
+            color:#64748b; 
+            padding:10px 12px; 
+            text-transform:uppercase; 
+            font-size:11px;
+            border-bottom:1px solid #334155;
+        }
+        .table-modern td { 
+            padding:10px 12px; 
+            border-bottom:1px solid #1e293b;
+        }
+        .table-modern tr:hover { background:#1e293b; }
+        
+        /* Badge */
+        .badge-green { 
+            background:#10b98120; 
+            color:#10b981; 
+            border-radius:4px; 
+            padding:4px 8px; 
+            font-size:11px;
+        }
+        .badge-red { 
+            background:#ef444420; 
+            color:#ef4444; 
+            border-radius:4px; 
+            padding:4px 8px; 
+            font-size:11px;
+        }
+        .badge-yellow { 
+            background:#f59e0b20; 
+            color:#f59e0b; 
+            border-radius:4px; 
+            padding:4px 8px; 
+            font-size:11px;
         }
         
-        .form-control:focus, .form-select:focus {
-            border-color: #3498db;
-            box-shadow: 0 0 0 0.2rem rgba(52, 152, 219, 0.3);
-            background: rgba(255, 255, 255, 1);
-            color: #2c3e50;
+        /* Quick Stats */
+        .quick-stats { 
+            display:flex; 
+            gap:16px; 
+            flex-wrap:wrap;
         }
-        
-        .form-control::placeholder {
-            color: rgba(44, 62, 80, 0.6);
+        .stat-box { 
+            background:#1e293b; 
+            border:1px solid #334155; 
+            border-radius:8px; 
+            padding:16px; 
+            flex:1;
+            min-width:140px;
         }
+        .stat-box .label { font-size:12px; color:#64748b; margin-bottom:6px; }
+        .stat-box .value { font-size:20px; font-weight:700; }
         
-        .form-select option {
-            background: white;
-            color: #2c3e50;
-        }
+        /* Scrollbar */
+        ::-webkit-scrollbar { width:8px; }
+        ::-webkit-scrollbar-track { background:#0f172a; }
+        ::-webkit-scrollbar-thumb { background:#334155; border-radius:4px; }
+        ::-webkit-scrollbar-thumb:hover { background:#475569; }
         
-        .quick-strike-btn {
-            border-radius: 25px;
-            margin: 3px;
-            min-width: 85px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            border: 2px solid rgba(255, 255, 255, 0.8);
-        }
-        
-        .quick-strike-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
-        }
-        
-        .btn-warning {
-            background: linear-gradient(45deg, #f39c12, #e67e22);
-            border: none;
-            font-weight: bold;
-            text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.3);
-        }
-        
-        .btn-outline-light:hover {
-            background: rgba(255, 255, 255, 0.2);
-            border-color: white;
-        }
-        
-        .status-card {
-            background: linear-gradient(135deg, #27ae60 0%, #2ecc71 100%);
-            border-radius: 20px;
-            color: white;
-            box-shadow: 0 8px 25px rgba(39, 174, 96, 0.3);
-        }
-        
-        .login-card {
-            background: linear-gradient(135deg, #8e44ad 0%, #9b59b6 100%);
-            border-radius: 20px;
-            color: white;
-            box-shadow: 0 10px 30px rgba(142, 68, 173, 0.3);
-        }
-        
-        .price-display {
-            font-size: 2.5rem;
-            font-weight: bold;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-        }
-        
-        .form-label {
-            color: white;
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            display: block;
-        }
-        
-        .simple-form-group {
-            margin-bottom: 1.5rem;
-        }
-        
-        .basket-item {
-            background: linear-gradient(135deg, rgba(255, 255, 255, 0.15), rgba(255, 255, 255, 0.05));
-            border-radius: 15px;
-            padding: 20px;
-            margin-bottom: 15px;
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            transition: all 0.3s ease;
-        }
-        
-        .basket-item:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
-            background: linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.1));
-        }
-        
-        .price-display {
-            font-size: 3rem;
-            font-weight: bold;
-            text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.3);
-            background: linear-gradient(45deg, #fff, #ecf0f1);
-            background-clip: text;
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+        /* Responsive */
+        @media(max-width:768px) {
+            .sidebar { display:none; }
+            .main-container { margin-left:0; padding-top:80px; }
         }
     </style>
 </head>
 <body>
-    <div class="container-fluid py-4">
-        <!-- Header -->
-        <div class="row mb-4">
-            <div class="col-12">
-                <div class="trading-card p-4 text-center">
-                    <h1 class="mb-0"><i class="fas fa-chart-line text-primary"></i> Flattrade Options Trading</h1>
-                    <p class="text-muted mb-0">Simple & Fast Order Placement</p>
+    <!-- Topbar -->
+    <div class="topbar d-flex justify-content-between align-items-center">
+        <div class="d-flex align-items-center gap-3">
+            <div class="logo"><i class="fas fa-bolt"></i> FAST TRADER</div>
+            <input type="text" placeholder="Search NIFTY, BANKNIFTY..." style="width:280px;">
                 </div>
+        <div class="d-flex align-items-center gap-3">
+            <div class="d-none d-sm-block" id="topUserName" style="display:none !important;">
+                <div style="font-size:12px;color:#64748b;">Welcome</div>
+                <div style="font-size:14px;font-weight:600;color:#10b981;" id="topUserNameText">--</div>
             </div>
+            <div class="d-none d-sm-block">
+                <div style="font-size:12px;color:#64748b;">Available Margin</div>
+                <div style="font-size:16px;font-weight:700;" id="topFunds">₹0</div>
         </div>
-
-        <!-- Authentication Status -->
-        <div class="row mb-4" id="authSection">
-            <div class="col-12">
-                <div class="login-card p-4 text-center">
-                    <div id="authStatus">
-                        <div class="alert alert-warning">
-                            <i class="fas fa-exclamation-triangle"></i>
-                            <strong>Not Authenticated</strong> - Please login to start trading
+            <div class="dropdown">
+                <button class="btn btn-sm btn-outline-light" id="userMenuBtn" onclick="quickLogin()">
+                    <i class="fas fa-sign-in-alt"></i> Login
+                </button>
+                <div class="dropdown-menu dropdown-menu-end" id="userDropdown" style="display:none;position:absolute;right:0;top:100%;background:#1e293b;border:1px solid #334155;border-radius:8px;padding:8px;min-width:220px;margin-top:8px;z-index:1000;">
+                    <div style="padding:12px;border-bottom:1px solid #334155;margin-bottom:8px;">
+                        <div style="font-size:12px;color:#64748b;">User ID</div>
+                        <div style="font-size:14px;font-weight:600;color:#fff;" id="dropdownUserId">--</div>
+                        <div style="font-size:12px;color:#64748b;margin-top:4px;" id="dropdownUserName">--</div>
                         </div>
-                    </div>
-                    <button class="btn btn-light btn-lg" onclick="quickLogin()" id="loginBtn">
-                        <i class="fas fa-sign-in-alt"></i> Login to Flattrade
+                    <button class="btn btn-sm btn-danger w-100" onclick="logout()">
+                        <i class="fas fa-sign-out-alt"></i> Logout
                     </button>
                 </div>
+                </div>
             </div>
         </div>
 
-        <!-- Trading Interface -->
-        <div id="tradingInterface" style="display: none;">
-            <!-- Real-time Price Display -->
-            <div class="row mb-4">
-                <div class="col-12">
-                    <div class="card bg-dark text-light border-info">
-                        <div class="card-body">
-                            <div class="row">
-                                <div class="col-md-4">
-                                    <div class="d-flex align-items-center">
-                                        <i class="fas fa-chart-line text-success me-3" style="font-size: 2rem;"></i>
-                                        <div>
-                                            <h5 class="mb-1" id="niftySymbol">NIFTY 50</h5>
-                                            <h3 class="mb-0 text-warning" id="niftyPrice">Loading...</h3>
+    <!-- Sidebar -->
+    <div class="sidebar">
+        <a href="#price" class="active"><i class="fas fa-chart-line me-2"></i> Market</a>
+        <a href="#builder"><i class="fas fa-hammer me-2"></i> Builder</a>
+        <a href="#basket"><i class="fas fa-shopping-basket me-2"></i> Basket <span class="badge bg-primary ms-auto" id="basketCount">0</span></a>
+        <a href="#orders"><i class="fas fa-list me-2"></i> Orders</a>
+        <a href="#positions"><i class="fas fa-briefcase me-2"></i> Positions</a>
+        <a href="#settings"><i class="fas fa-cog me-2"></i> Settings</a>
                                         </div>
+
+    <!-- Main -->
+    <div class="main-container">
+        <!-- Alert Container for notifications -->
+        <div id="alertContainer" style="position:fixed;top:70px;right:20px;z-index:9999;min-width:300px;"></div>
+        
+        <!-- Auth Alert (hidden by default, shown only when not authenticated) -->
+        <div id="authAlert" class="alert alert-warning justify-content-between align-items-center mb-3" style="display: none;">
+            <span><i class="fas fa-exclamation-triangle"></i> Not authenticated. Please login to trade.</span>
+            <button class="btn btn-sm btn-warning" onclick="quickLogin()">Login Now</button>
                                     </div>
+
+        <!-- Price Ticker -->
+        <div class="price-ticker" id="price">
+            <div class="item">
+                <div class="label">NIFTY 50</div>
+                <div class="value" id="niftyPrice">--</div>
+                <div class="label"><span id="niftyChange">--</span></div>
                                 </div>
-                                <div class="col-md-2">
-                                    <small class="text-muted">Change</small>
-                                    <div class="fw-bold" id="niftyChange">--</div>
+            <div class="item">
+                <div class="label">BANKNIFTY</div>
+                <div class="value" id="bankniftyPrice">--</div>
+                <div class="label"><span id="bankniftyChange">--</span></div>
                                 </div>
-                                <div class="col-md-2">
-                                    <small class="text-muted">Change %</small>
-                                    <div class="fw-bold" id="niftyChangePercent">--</div>
-                                </div>
-                                <div class="col-md-2">
-                                    <small class="text-muted">High</small>
-                                    <div class="fw-bold text-success" id="niftyHigh">--</div>
-                                </div>
-                                <div class="col-md-2">
-                                    <small class="text-muted">Low</small>
-                                    <div class="fw-bold text-danger" id="niftyLow">--</div>
-                                </div>
-                            </div>
-                            <div class="row mt-3">
-                                <div class="col-12">
-                                    <button class="btn btn-outline-info btn-sm me-2" onclick="refreshPrice()">
-                                        <i class="fas fa-sync"></i> Refresh Price
-                                    </button>
-                                    <button class="btn btn-outline-warning btn-sm me-2" onclick="loadATMOptions()">
-                                        <i class="fas fa-bullseye"></i> ATM Options
-                                    </button>
-                                    <button class="btn btn-outline-primary btn-sm" onclick="loadOptionChain()">
-                                        <i class="fas fa-table"></i> Option Chain
-                                    </button>
-                                    <small class="text-muted ms-3">Last updated: <span id="priceTimestamp">--</span></small>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
+            <div class="item">
+                <div class="label">INDIA VIX</div>
+                <div class="value" id="vixPrice">--</div>
+                <div class="label"><span id="vixChange">--</span></div>
                 </div>
             </div>
 
-            <!-- ATM Options Display -->
-            <div class="row mb-4" id="atmOptionsSection" style="display: none;">
-                <div class="col-12">
-                    <div class="card bg-dark text-light border-warning">
-                        <div class="card-header">
-                            <h6 class="mb-0"><i class="fas fa-bullseye"></i> At-The-Money Options</h6>
+        <!-- Quick Stats -->
+        <div class="quick-stats mb-4">
+            <div class="stat-box">
+                <div class="label">Available</div>
+                <div class="value" id="availableMargin">₹0</div>
                         </div>
-                        <div class="card-body">
-                            <div class="row" id="atmOptionsData">
-                                <!-- ATM options will be loaded here -->
+            <div class="stat-box">
+                <div class="label">Used</div>
+                <div class="value" id="usedMargin">₹0</div>
                             </div>
+            <div class="stat-box">
+                <div class="label">P&L Today</div>
+                <div class="value price-up" id="pnlToday">₹0</div>
                         </div>
-                    </div>
+            <div class="stat-box">
+                <div class="label">Orders</div>
+                <div class="value" id="ordersCount">0</div>
                 </div>
             </div>
 
             <div class="row">
-                <!-- Order Form -->
-                <div class="col-lg-6 mb-4">
-                    <div class="order-form">
-                        <h3 class="mb-4"><i class="fas fa-rocket"></i> Place Order</h3>
+            <!-- Option Builder -->
+            <div class="col-lg-6 mb-4" id="builder">
+                <div class="card-modern">
+                    <div class="card-header-modern">
+                        <h6 class="m-0"><i class="fas fa-hammer me-2"></i> Option Builder</h6>
+                        <button class="btn btn-sm btn-outline-light" onclick="refreshPrice()">
+                            <i class="fas fa-sync"></i>
+                        </button>
+                    </div>
                         
                         <!-- Symbol & Expiry -->
                         <div class="row mb-3">
                             <div class="col-6">
-                                <div class="simple-form-group">
-                                    <label class="form-label">Symbol</label>
-                                    <select class="form-select" id="symbol">
-                                        <option value="NIFTY">NIFTY</option>
-                                        <option value="BANKNIFTY">BANKNIFTY</option>
-                                        <option value="FINNIFTY">FINNIFTY</option>
+                            <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Symbol</label>
+                            <select class="form-select-modern w-100" id="symbol">
+                                <option>NIFTY</option>
+                                <option>BANKNIFTY</option>
+                                <option>FINNIFTY</option>
                                     </select>
-                                </div>
                             </div>
                             <div class="col-6">
-                                <div class="simple-form-group">
-                                    <label class="form-label">Expiry Date</label>
-                                    <select class="form-select" id="expiry">
-                                        <option value="14AUG25">14 Aug 2025</option>
-                                        <option value="21AUG25">21 Aug 2025</option>
-                                        <option value="28AUG25">28 Aug 2025</option>
-                                        <option value="04SEP25">04 Sep 2025</option>
+                            <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Expiry</label>
+                            <select class="form-select-modern w-100" id="expiry">
+                                <!-- Will be populated dynamically with next 4 Thursday expiries -->
                                     </select>
-                                </div>
                             </div>
                         </div>
 
-                        <!-- Current Price -->
-                        <div class="text-center mb-4">
-                            <div class="price-display" id="currentPrice">24,500.00</div>
-                            <small>Current Price</small>
-                            <button class="btn btn-outline-light btn-sm ms-2" onclick="refreshPrice()">
-                                <i class="fas fa-sync-alt"></i>
-                            </button>
+                    <!-- Current Price Display -->
+                    <div class="text-center mb-3">
+                        <div style="font-size:36px;font-weight:700;" id="currentPrice">24,350.00</div>
+                        <div style="font-size:12px;color:#64748b;">Spot Price</div>
                         </div>
 
-                        <!-- Quick Strike Selection -->
-                        <div class="text-center mb-4">
-                            <div class="mb-2">
-                                <small class="text-white-50">Quick Strike Selection</small>
-                            </div>
-                            <div class="btn-group-vertical btn-group-sm">
-                                <div class="btn-group">
-                                    <button class="btn btn-outline-light quick-strike-btn" onclick="selectQuickStrike(-200)">-200</button>
-                                    <button class="btn btn-outline-light quick-strike-btn" onclick="selectQuickStrike(-100)">-100</button>
-                                    <button class="btn btn-warning quick-strike-btn" onclick="selectQuickStrike(0)">ATM</button>
-                                    <button class="btn btn-outline-light quick-strike-btn" onclick="selectQuickStrike(100)">+100</button>
-                                    <button class="btn btn-outline-light quick-strike-btn" onclick="selectQuickStrike(200)">+200</button>
-                                </div>
-                            </div>
+                    <!-- Strike Selection -->
+                    <div class="strike-pills">
+                        <div class="strike-pill" onclick="selectQuickStrike(-200)">-200</div>
+                        <div class="strike-pill" onclick="selectQuickStrike(-100)">-100</div>
+                        <div class="strike-pill active" onclick="selectQuickStrike(0)">ATM</div>
+                        <div class="strike-pill" onclick="selectQuickStrike(100)">+100</div>
+                        <div class="strike-pill" onclick="selectQuickStrike(200)">+200</div>
                         </div>
 
-                        <!-- Strike Price -->
-                        <div class="row mb-3">
-                            <div class="col-12">
-                                <div class="simple-form-group">
-                                    <label class="form-label">Strike Price</label>
-                                    <input type="number" class="form-control" id="strikePrice" placeholder="24500" step="50">
-                                </div>
-                            </div>
+                    <!-- Manual Strike -->
+                    <div class="mb-3">
+                        <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Strike Price</label>
+                        <input type="number" class="form-control-modern w-100" id="strikePrice" placeholder="24500" step="50">
                         </div>
 
-                        <!-- Option Type & Action -->
+                    <!-- CE/PE & Qty -->
                         <div class="row mb-3">
                             <div class="col-6">
-                                <div class="simple-form-group">
-                                    <label class="form-label">Option Type</label>
-                                    <select class="form-select" id="optionType">
+                            <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Type</label>
+                            <select class="form-select-modern w-100" id="optionType">
                                         <option value="CE">Call (CE)</option>
                                         <option value="PE">Put (PE)</option>
                                     </select>
-                                </div>
                             </div>
                             <div class="col-6">
-                                <div class="simple-form-group">
-                                    <label class="form-label">Action</label>
-                                    <select class="form-select" id="action">
-                                        <option value="BUY">Buy</option>
-                                        <option value="SELL">Sell</option>
-                                    </select>
-                                </div>
+                            <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Quantity (Lot)</label>
+                            <input type="number" class="form-control-modern w-100" id="quantity" value="75" step="1">
                             </div>
                         </div>
 
-                        <!-- Quantity & Order Type -->
+                    <!-- Product & Order Type -->
                         <div class="row mb-3">
                             <div class="col-6">
-                                <div class="simple-form-group">
-                                    <label class="form-label">Quantity</label>
-                                    <input type="number" class="form-control" id="quantity" value="25" step="25" min="25">
-                                </div>
+                            <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Product</label>
+                            <select class="form-select-modern w-100" id="product">
+                                <option value="MIS">MIS</option>
+                                <option value="NRML">NRML</option>
+                            </select>
                             </div>
                             <div class="col-6">
-                                <div class="simple-form-group">
-                                    <label class="form-label">Order Type</label>
-                                    <select class="form-select" id="orderType" onchange="togglePriceField()">
+                            <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Order Type</label>
+                            <select class="form-select-modern w-100" id="orderType" onchange="togglePriceField()">
                                         <option value="MARKET">Market</option>
                                         <option value="LIMIT">Limit</option>
                                     </select>
-                                </div>
                             </div>
                         </div>
 
-                        <!-- Price (shown only for limit orders) -->
-                        <div class="row mb-4" id="priceSection" style="display: none;">
-                            <div class="col-12">
-                                <div class="simple-form-group">
-                                    <label class="form-label">Limit Price</label>
-                                    <input type="number" class="form-control" id="price" placeholder="0.00" step="0.05">
-                                </div>
-                            </div>
+                    <!-- Limit Price -->
+                    <div class="mb-3" id="priceSection" style="display:none;">
+                        <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Limit Price</label>
+                        <input type="number" class="form-control-modern w-100" id="price" placeholder="0.00" step="0.05">
                         </div>
 
-                        <!-- Action Buttons -->
-                        <div class="row">
-                            <div class="col-6">
-                                <button class="btn btn-outline-light w-100 mb-2" onclick="addToBasket()">
-                                    <i class="fas fa-plus"></i> Add to Basket
+                    <!-- Actions -->
+                    <div class="d-flex gap-2">
+                        <button class="btn-buy flex-fill" onclick="addToBasket('BUY')">
+                            <i class="fas fa-arrow-up me-2"></i> BUY
                                 </button>
-                            </div>
-                            <div class="col-6">
-                                <button class="btn btn-trade w-100 mb-2" onclick="placeOrderNow()">
-                                    <i class="fas fa-paper-plane"></i> Place Now
+                        <button class="btn-sell flex-fill" onclick="addToBasket('SELL')">
+                            <i class="fas fa-arrow-down me-2"></i> SELL
                                 </button>
-                            </div>
                         </div>
                     </div>
                 </div>
 
-                <!-- Order Basket & Status -->
-                <div class="col-lg-6">
-                    <!-- User Info -->
-                    <div class="status-card p-3 mb-4">
-                        <div class="row text-center">
-                            <div class="col-4">
-                                <h6 class="mb-1">Available</h6>
-                                <strong id="availableMargin">₹0</strong>
-                            </div>
-                            <div class="col-4">
-                                <h6 class="mb-1">Used</h6>
-                                <strong id="usedMargin">₹0</strong>
-                            </div>
-                            <div class="col-4">
-                                <h6 class="mb-1">User</h6>
-                                <strong id="userInfo">-</strong>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Order Basket -->
-                    <div class="trading-card p-4">
-                        <div class="d-flex justify-content-between align-items-center mb-3">
-                            <h5 class="mb-0"><i class="fas fa-shopping-basket"></i> Order Basket</h5>
+            <!-- Basket -->
+            <div class="col-lg-6 mb-4" id="basket">
+                <div class="card-modern">
+                    <div class="card-header-modern">
+                        <h6 class="m-0"><i class="fas fa-shopping-basket me-2"></i> Order Basket (<span id="basketCountHeader">0</span>)</h6>
                             <div>
-                                <button class="btn btn-success btn-sm me-2" onclick="placeAllOrders()" id="placeAllBtn" disabled>
+                            <button class="btn btn-sm btn-success me-2" onclick="placeAllOrders()" id="placeAllBtn" disabled>
                                     <i class="fas fa-check-double"></i> Place All
                                 </button>
-                                <button class="btn btn-outline-danger btn-sm" onclick="clearBasket()">
-                                    <i class="fas fa-trash"></i> Clear
+                            <button class="btn btn-sm btn-outline-danger" onclick="clearBasket()">
+                                <i class="fas fa-trash"></i>
                                 </button>
                             </div>
                         </div>
-                        
-                        <div id="basketContainer">
-                            <div class="text-center text-muted py-4">
+                    <div id="basketContainer" style="max-height:400px;overflow-y:auto;">
+                        <div class="text-center py-5" style="color:#64748b;">
                                 <i class="fas fa-shopping-basket fa-3x mb-3 opacity-50"></i>
-                                <p>No orders in basket<br><small>Add orders using the form</small></p>
+                            <div>No orders in basket</div>
+                            <small>Use builder to add orders</small>
                             </div>
                         </div>
                     </div>
 
-                    <!-- Quick Orders -->
-                    <div class="trading-card p-4 mt-4">
-                        <h6 class="mb-3"><i class="fas fa-bolt"></i> Today's Orders</h6>
-                        <div id="todaysOrders">
-                            <div class="text-center text-muted py-3">
-                                <small>No orders today</small>
+                <!-- Today's Orders -->
+                <div class="card-modern mt-3">
+                    <div class="card-header-modern">
+                        <h6 class="m-0"><i class="fas fa-list me-2"></i> Today's Orders</h6>
+                        <button class="btn btn-sm btn-outline-light" onclick="refreshOrders()">
+                            <i class="fas fa-sync"></i>
+                        </button>
                             </div>
-                        </div>
+                    <div id="todaysOrders" style="max-height:300px;overflow-y:auto;">
+                        <div class="text-center py-4" style="color:#64748b;font-size:13px;">
+                            No orders today
                     </div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- Alert Container -->
-    <div class="position-fixed top-0 end-0 p-3" style="z-index: 9999;">
-        <div id="alertContainer"></div>
+        <!-- Orders & Positions -->
+        <div class="row">
+            <div class="col-12" id="orders">
+                <div class="card-modern">
+                    <div class="card-header-modern">
+                        <h6 class="m-0"><i class="fas fa-list me-2"></i> Orders</h6>
+                        <button class="btn btn-sm btn-outline-light" onclick="refreshOrders()">
+                            <i class="fas fa-sync"></i> Refresh
+                        </button>
+                    </div>
+                    <table class="table-modern">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Symbol</th>
+                                <th>Type</th>
+                                <th>Qty</th>
+                                <th>Price</th>
+                                <th>Status</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="ordersTableBody">
+                            <tr>
+                                <td colspan="7" class="text-center py-4" style="color:#64748b;">No orders</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
     </div>
 
-    <!-- Scripts -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="script_simple.js"></script>
 </body>
