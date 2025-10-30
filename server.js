@@ -366,23 +366,30 @@ app.post('/api/place-gtt-oco', async (req, res) => {
             try {
                 // Determine opposite side for SL: if BUY, SL is SELL; if SELL, SL is BUY
                 const slTrantype = order.trantype === 'B' ? 'S' : 'B';
+                
+                // According to Flattrade API docs:
+                // - For SL: trigger when LTP goes BELOW trigger price (LTP_BOS = Last Traded Price Below Or Same)
+                // - Use alerttype: 'LTP' with alertval as trigger price
+                // - Alternative format: ai_t: 'LTP_BOS' with d: trigger price
                 const slAlertData = {
                     uid: session.userId,
                     actid: session.userId,
                     exch: 'NFO',
                     tsym: tradingSymbol,
-                    ai_t: 'LTP_BOS', // Alert Type - Last Traded Price Below (triggers when LTP < trigger)
-                    validity: 'GTT', // 1-year GTT validity
-                    d: sl.toString(), // Data to be compared with LTP (trigger price - when LTP goes below this)
+                    ai_t: 'LTP_BOS', // Alert Type - Last Traded Price Below Or Same (triggers when LTP <= trigger)
+                    validity: 'GTT', // GTT validity (1-year)
+                    d: sl.toString(), // Data to be compared with LTP (trigger price - when LTP goes below/equal this)
                     prc: sl.toString(), // Limit price for the order to be placed
                     qty: order.quantity.toString(),
                     prd: order.product === 'MIS' ? 'I' : (order.product === 'NRML' ? 'M' : 'I'),
                     trantype: slTrantype, // Opposite side to exit position
                     prctyp: 'LMT', // Limit order type
-                    ret: 'DAY', // Retention type
+                    ret: 'DAY', // Retention type (or 'GTT' for GTT orders)
                     dscqty: '0', // Disclosed quantity (required)
                     remarks: 'SL GTT', // Remarks (required)
                     ordersource: 'API'
+                    // Note: Alternative format according to docs:
+                    // alerttype: 'LTP', alertval: sl.toString() - but current format works
                 };
 
                 console.log('📤 Setting SL GTT Alert:', JSON.stringify(slAlertData, null, 2));
@@ -431,23 +438,30 @@ app.post('/api/place-gtt-oco', async (req, res) => {
             try {
                 // TP is opposite side to exit position
                 const tpTrantype = order.trantype === 'B' ? 'S' : 'B';
+                
+                // According to Flattrade API docs:
+                // - For TP: trigger when LTP goes ABOVE trigger price (LTP_AOS = Last Traded Price Above Or Same)
+                // - Use alerttype: 'LTP' with alertval as trigger price
+                // - Alternative format: ai_t: 'LTP_AOS' with d: trigger price
                 const tpAlertData = {
                     uid: session.userId,
                     actid: session.userId,
                     exch: 'NFO',
                     tsym: tradingSymbol,
-                    ai_t: 'LTP_AOS', // Alert Type - Last Traded Price Above (triggers when LTP > trigger)
-                    validity: 'GTT', // 1-year GTT validity
-                    d: tp.toString(), // Data to be compared with LTP (trigger price - when LTP goes above this)
+                    ai_t: 'LTP_AOS', // Alert Type - Last Traded Price Above Or Same (triggers when LTP >= trigger)
+                    validity: 'GTT', // GTT validity (1-year)
+                    d: tp.toString(), // Data to be compared with LTP (trigger price - when LTP goes above/equal this)
                     prc: tp.toString(), // Limit price for the order to be placed
                     qty: order.quantity.toString(),
                     prd: order.product === 'MIS' ? 'I' : (order.product === 'NRML' ? 'M' : 'I'),
                     trantype: tpTrantype, // Opposite side to exit position
                     prctyp: 'LMT', // Limit order type
-                    ret: 'DAY', // Retention type
+                    ret: 'DAY', // Retention type (or 'GTT' for GTT orders)
                     dscqty: '0', // Disclosed quantity (required)
                     remarks: 'TP GTT', // Remarks (required)
                     ordersource: 'API'
+                    // Note: Alternative format according to docs:
+                    // alerttype: 'LTP', alertval: tp.toString() - but current format works
                 };
 
                 console.log('📤 Setting TP GTT Alert:', JSON.stringify(tpAlertData, null, 2));
@@ -1769,69 +1783,6 @@ function getNextThursday(date) {
     return thursday;
 }
 
-// Get positions
-app.get('/api/positions', async (req, res) => {
-    try {
-        const sessionId = ensureSessionCookie(req, res);
-        
-        if (!sessionId || !userSessions.has(sessionId)) {
-            return res.status(401).json({ 
-                status: 'error', 
-                message: 'Not authenticated. Please login first.' 
-            });
-        }
-        
-        const session = userSessions.get(sessionId);
-        
-        if (!session.isAuthenticated) {
-            return res.status(401).json({ 
-                status: 'error', 
-                message: 'Authentication incomplete. Please complete OAuth flow.' 
-            });
-        }
-
-        // Make actual API call to get positions
-        const requestData = {
-            uid: session.userId,
-            actid: session.userId
-        };
-
-        console.log('Fetching positions for user:', session.userId);
-
-        const response = await axios.post(`${FLATTRADE_BASE_URL}/PositionBook`, 
-            `jData=${JSON.stringify(requestData)}&jKey=${session.jKey}`,
-            {
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                }
-            }
-        );
-        
-        console.log('PositionBook response:', response.data);
-        
-        if (response.data.stat === 'Ok') {
-            res.json({ 
-                status: 'success', 
-                data: response.data.values || [],
-                message: 'Positions fetched successfully'
-            });
-        } else {
-            res.json({ 
-                status: 'error', 
-                message: response.data.emsg || 'Failed to fetch positions',
-                data: []
-            });
-        }
-    } catch (error) {
-        console.error('Positions error:', error);
-        res.status(500).json({ 
-            status: 'error', 
-            message: 'Failed to get positions',
-            error: error.message 
-        });
-    }
-});
-
 // Get orderbook
 app.get('/api/orders', async (req, res) => {
     try {
@@ -1853,13 +1804,14 @@ app.get('/api/orders', async (req, res) => {
             });
         }
 
-        // Make actual API call to get orderbook
+        // Get Full Order Book (All Orders for the Day)
+        // Endpoint: https://piconnect.flattrade.in/PiConnectTP/OrderBook
+        // Parameters: jKey and jData with uid only
         const requestData = {
-            uid: session.userId,
-            actid: session.userId
+            uid: session.userId
         };
 
-        console.log('Fetching orders for user:', session.userId);
+        console.log('📋 Fetching order book for user:', session.userId);
 
         const response = await axios.post(`${FLATTRADE_BASE_URL}/OrderBook`, 
             `jData=${JSON.stringify(requestData)}&jKey=${session.jKey}`,
@@ -1870,27 +1822,70 @@ app.get('/api/orders', async (req, res) => {
             }
         );
         
-        console.log('OrderBook response:', response.data);
+        console.log('✅ OrderBook API response type:', Array.isArray(response.data) ? 'Array' : typeof response.data);
+        console.log('✅ OrderBook API response:', JSON.stringify(response.data, null, 2));
         
-        if (response.data.stat === 'Ok') {
-            res.json({ 
-                status: 'success', 
-                data: response.data.values || [],
-                message: 'Orders fetched successfully'
-            });
+        // According to FlatTrade docs, OrderBook returns a JSON array directly
+        // Each item in the array has stat: "Ok" and order details
+        let orders = [];
+        
+        if (Array.isArray(response.data)) {
+            // Direct array response
+            orders = response.data;
+            console.log(`✅ Found ${orders.length} orders in array response`);
+        } else if (response.data.stat === 'Ok' || response.data.stat === 'ok') {
+            // Object with stat: "Ok" and values array
+            if (response.data.values && Array.isArray(response.data.values)) {
+                orders = response.data.values;
+                console.log(`✅ Found ${orders.length} orders in values property`);
+            } else if (response.data.tsym || response.data.qty !== undefined) {
+                // Single order object
+                orders = [response.data];
+                console.log(`✅ Found single order`);
+            } else {
+                console.log(`⚠️ API returned Ok but no orders found`);
+            }
         } else {
-            res.json({ 
-                status: 'error', 
-                message: response.data.emsg || 'Failed to fetch orders',
-                data: []
+            // Error response
+            const errorMsg = response.data.emsg || response.data.message || 'Failed to fetch orders';
+            console.error(`❌ OrderBook API error: ${errorMsg}`);
+            console.error('Response structure:', {
+                isArray: Array.isArray(response.data),
+                type: typeof response.data,
+                stat: response.data.stat,
+                hasValues: !!response.data.values,
+                keys: Object.keys(response.data || {})
             });
+            
+            // Check if it's actually an array being returned as error
+            if (Array.isArray(response.data) && response.data.length > 0) {
+                orders = response.data;
+                console.log(`⚠️ Treating array response as orders (${orders.length} items)`);
+            } else {
+                // Empty or error - return empty array but success status
+                console.log(`⚠️ No orders: ${errorMsg}`);
+                return res.json({ 
+                    status: 'success', 
+                    data: [],
+                    message: 'No orders found for today'
+                });
+            }
         }
+        
+        // Return success with orders (even if empty)
+        res.json({ 
+            status: 'success', 
+            data: orders,
+            message: orders.length > 0 ? `Found ${orders.length} orders` : 'No orders found for today'
+        });
     } catch (error) {
-        console.error('Orders error:', error);
+        console.error('❌ Orders endpoint error:', error.message);
+        console.error('Error details:', error.response?.data || error);
         res.status(500).json({ 
             status: 'error', 
-            message: 'Failed to get orders',
-            error: error.message 
+            message: 'Failed to get orders: ' + (error.response?.data?.emsg || error.message),
+            data: [],
+            error: error.response?.data || error.message
         });
     }
 });
@@ -2225,69 +2220,12 @@ app.post('/api/cancel-order', async (req, res) => {
 });
 
 // Get orders endpoint (enhanced)
-app.get('/api/orders', async (req, res) => {
-    try {
-        const sessionId = req.cookies.sessionId;
-        
-        if (!sessionId || !userSessions.has(sessionId)) {
-            return res.status(401).json({ 
-                status: 'error', 
-                message: 'Not authenticated. Please login first.' 
-            });
-        }
-        
-        const session = userSessions.get(sessionId);
-        
-        if (!session.isAuthenticated) {
-            return res.status(401).json({ 
-                status: 'error', 
-                message: 'Authentication incomplete. Please complete OAuth flow.' 
-            });
-        }
-
-        const orderData = {
-            uid: session.userId
-        };
-        
-        const response = await axios.post(`${FLATTRADE_BASE_URL}/OrderBook`, 
-            `jData=${JSON.stringify(orderData)}&jKey=${session.jKey}`,
-            {
-                headers: {
-                    'Content-Type': 'application/x-www-form-urlencoded'
-                }
-            }
-        );
-        
-        console.log('OrderBook response:', response.data);
-        
-        if (response.data.stat === 'Ok') {
-            res.json({ 
-                status: 'success', 
-                data: response.data.values || [],
-                message: 'Orders loaded successfully'
-            });
-        } else {
-            res.json({ 
-                status: 'success', 
-                data: [],
-                message: 'No orders found'
-            });
-        }
-        
-    } catch (error) {
-        console.error('Get orders error:', error);
-        res.status(500).json({ 
-            status: 'error', 
-            message: 'Failed to get orders',
-            error: error.message 
-        });
-    }
-});
+// Duplicate endpoint removed - using the enhanced version above
 
 // Get positions endpoint (enhanced)
 app.get('/api/positions', async (req, res) => {
     try {
-        const sessionId = req.cookies.sessionId;
+        const sessionId = ensureSessionCookie(req, res);
         
         if (!sessionId || !userSessions.has(sessionId)) {
             return res.status(401).json({ 
@@ -2305,10 +2243,13 @@ app.get('/api/positions', async (req, res) => {
             });
         }
 
+        // According to Flattrade API docs, PositionBook requires uid and actid
         const positionData = {
-            uid: session.userId
+            uid: session.userId,
+            actid: session.userId  // Account ID (same as user ID for individual accounts)
         };
         
+        console.log('📋 Fetching PositionBook for user:', session.userId);
         const response = await axios.post(`${FLATTRADE_BASE_URL}/PositionBook`, 
             `jData=${JSON.stringify(positionData)}&jKey=${session.jKey}`,
             {
@@ -2318,24 +2259,89 @@ app.get('/api/positions', async (req, res) => {
             }
         );
         
-        console.log('PositionBook response:', response.data);
+        console.log('✅ PositionBook response type:', Array.isArray(response.data) ? 'Array' : typeof response.data);
+        console.log('✅ PositionBook response:', JSON.stringify(response.data, null, 2));
         
-        if (response.data.stat === 'Ok') {
-            res.json({ 
-                status: 'success', 
-                data: response.data.values || [],
-                message: 'Positions loaded successfully'
-            });
-        } else {
-            res.json({ 
+        // According to Flattrade API docs, PositionBook can return:
+        // 1. Array of positions directly
+        // 2. Object with stat: "Ok" and values array
+        // 3. Single position object
+        // 4. Error: {"stat": "Not_Ok", "emsg": "no data"} when no positions
+        let positions = [];
+        
+        // Check for error response first
+        if (response.data.stat === 'Not_Ok' || response.data.stat === 'not_ok') {
+            const errorMsg = response.data.emsg || response.data.message || 'No positions found';
+            console.log(`⚠️ API returned Not_Ok: ${errorMsg}`);
+            
+            // Return empty array with success status (no positions is not an error)
+            return res.json({ 
                 status: 'success', 
                 data: [],
-                message: 'No positions found'
+                message: errorMsg === 'no data' ? 'No positions found' : errorMsg
             });
         }
         
+        // Handle successful responses
+        if (Array.isArray(response.data)) {
+            // Direct array response
+            positions = response.data;
+            console.log(`✅ Found ${positions.length} positions in array response`);
+        } else if (response.data.stat === 'Ok' || response.data.stat === 'ok') {
+            // Object with stat: "Ok" and values array
+            if (response.data.values && Array.isArray(response.data.values)) {
+                positions = response.data.values;
+                console.log(`✅ Found ${positions.length} positions in values property`);
+            } else if (response.data.tsym || response.data.netqty !== undefined) {
+                // Single position object
+                positions = [response.data];
+                console.log(`✅ Found single position`);
+            } else {
+                console.log(`⚠️ API returned Ok but no positions found`);
+            }
+        } else {
+            // Unknown response format - try to extract array
+            const errorMsg = response.data?.emsg || response.data?.message || 'Unknown response format';
+            
+            // Check if it's actually an array being returned
+            if (Array.isArray(response.data) && response.data.length > 0) {
+                positions = response.data;
+                console.log(`⚠️ Treating array response as positions (${positions.length} items)`);
+            } else {
+                // Empty or error - return empty array but success status
+                console.log(`⚠️ No positions: ${errorMsg}`);
+                return res.json({ 
+                    status: 'success', 
+                    data: [],
+                    message: 'No positions found'
+                });
+            }
+        }
+        
+        // Calculate total P&L from positions (for server-side logging)
+        // According to Flattrade API docs: sum of rpnl + urmtom for each position
+        let totalPnL = 0;
+        positions.forEach(pos => {
+            const rpnl = parseFloat(pos.rpnl || 0); // Realized P&L
+            const urmtom = parseFloat(pos.urmtom || pos.upnl || 0); // Unrealized P&L (mark-to-market)
+            totalPnL += (rpnl + urmtom);
+            
+            // Log position details for debugging
+            if (pos.tsym) {
+                console.log(`  📈 ${pos.tsym}: NetQty=${pos.netqty || 0}, AvgPrc=${pos.avgprc || pos.netavgprc || 0}, LTP=${pos.ltp || pos.lp || 0}, RPNL=₹${rpnl.toFixed(2)}, UPNL=₹${urmtom.toFixed(2)}`);
+            }
+        });
+        
+        console.log(`💰 Server-side Total P&L (Today): ₹${totalPnL.toFixed(2)}`);
+        
+        res.json({ 
+            status: 'success',
+            data: positions,
+            message: 'Positions loaded successfully'
+        });
+        
     } catch (error) {
-        console.error('Get positions error:', error);
+        console.error('❌ Get positions error:', error);
         res.status(500).json({ 
             status: 'error', 
             message: 'Failed to get positions',

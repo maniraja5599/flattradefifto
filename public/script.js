@@ -284,84 +284,96 @@ async function loadUserInfo() {
 // Load orders and positions to calculate P&L and counts
 async function loadOrdersAndPositions() {
     try {
-        console.log('🔄 Loading orders and positions...');
+        console.log('🔄 ========== Loading orders and positions ==========');
         
         let totalPnL = 0;
         let positions = [];
         
-        // First, get TradeBook for today's realized P&L (executed trades)
-        try {
-            const tradeBookResponse = await fetch('/api/trade-book', { credentials: 'include' });
-            if (tradeBookResponse.ok) {
-                const tradeBookResult = await tradeBookResponse.json();
-                const trades = tradeBookResult.data || tradeBookResult.values || tradeBookResult || [];
-                
-                if (Array.isArray(trades) && trades.length > 0) {
-                    console.log(`📋 TradeBook: ${trades.length} trades today`);
-                    
-                    // Calculate realized P&L from trades
-                    let tradePnL = 0;
-                    trades.forEach(trade => {
-                        // TradeBook fields: pnl, rpnl, or calculate from price difference
-                        const tradePnLValue = parseFloat(trade.pnl || trade.rpnl || 0);
-                        tradePnL += tradePnLValue;
-                        
-                        if (tradePnLValue !== 0) {
-                            console.log(`  💰 ${trade.tsym || trade.symbol || 'N/A'}: P&L ₹${tradePnLValue.toFixed(2)}`);
-                        }
-                    });
-                    
-                    console.log(`💰 TradeBook Total P&L: ₹${tradePnL.toFixed(2)}`);
-                    totalPnL += tradePnL;
-                } else {
-                    console.log('📊 No trades found in TradeBook');
-                }
-            } else {
-                console.warn('⚠️ TradeBook request failed:', tradeBookResponse.status);
-            }
-        } catch (tradeError) {
-            console.log('⚠️ TradeBook not available:', tradeError.message);
-        }
-        
-        // Get positions for unrealized P&L (current open positions)
+        // Get positions for P&L calculation
+        // According to Flattrade API docs, PositionBook contains both:
+        // - rpnl (Realized P&L) - profit/loss from closed positions
+        // - urmtom (Unrealized P&L/MTM) - mark-to-market for open positions
+        // Total P&L = sum of rpnl + urmtom across all positions
+        console.log('📡 Calling /api/positions...');
         const positionsResponse = await fetch('/api/positions', { credentials: 'include' });
+        
+        console.log('📡 Response status:', positionsResponse.status, positionsResponse.statusText);
         
         if (!positionsResponse.ok) {
             console.error('❌ Positions API error:', positionsResponse.status, positionsResponse.statusText);
+            // Still try to update display with 0
+            const pnlTodayEl = document.getElementById('pnlToday');
+            if (pnlTodayEl) {
+                pnlTodayEl.textContent = '₹0.00';
+                pnlTodayEl.className = 'value price-up';
+            }
+            return;
+        }
+        
+        const positionsResult = await positionsResponse.json();
+        console.log('📦 Raw positions response:', JSON.stringify(positionsResult, null, 2));
+        
+        // Handle API error responses (stat: "Not_Ok")
+        if (positionsResult.stat === 'Not_Ok' || positionsResult.stat === 'not_ok') {
+            const errorMsg = positionsResult.emsg || positionsResult.message || 'No positions found';
+            console.log(`⚠️ API returned Not_Ok: ${errorMsg}`);
+            totalPnL = 0;
         } else {
-            const positionsResult = await positionsResponse.json();
-            console.log('📦 Raw positions response:', positionsResult);
-            
+            // Handle different response formats
             positions = positionsResult.data || positionsResult || [];
             
+            // If it's not an array, try to extract array from response
+            if (!Array.isArray(positions)) {
+                console.log('⚠️ Response is not an array, trying to extract...');
+                if (positionsResult.values && Array.isArray(positionsResult.values)) {
+                    positions = positionsResult.values;
+                    console.log('✅ Found positions in .values array');
+                } else if (positionsResult.status === 'success' && Array.isArray(positionsResult.data)) {
+                    positions = positionsResult.data;
+                    console.log('✅ Found positions in .data array');
+                } else if (positionsResult.length !== undefined) {
+                    // Handle array-like objects
+                    positions = Array.from(positionsResult);
+                    console.log('✅ Converted array-like object to array');
+                } else {
+                    console.warn('⚠️ Unexpected positions response format:', positionsResult);
+                    positions = [];
+                }
+            }
+            
+            console.log(`📊 Positions array length: ${positions.length}`);
+            
             if (Array.isArray(positions) && positions.length > 0) {
-                console.log('📊 Position Details:');
-                let unrealizedFromPositions = 0;
+                console.log('📊 Processing position details:');
                 
-                positions.forEach(position => {
-                    // FlatTrade PositionBook API fields:
-                    // urmtom - Unrealized Mark-to-Market (current P&L for open position)
-                    // upnl - Unrealized P&L (alternative field name)
-                    // rpnl - Realized P&L (from closed positions in position book)
-                    // netqty - Net quantity (can be used to check if position is open)
+                positions.forEach((position, index) => {
+                    // FlatTrade PositionBook API fields (as per official docs):
+                    // rpnl - Realized P&L (profit/loss from closed positions)
+                    // urmtom - Unrealized P&L/MTM (mark-to-market for open positions)
+                    // netqty - Net quantity (non-zero for open positions)
+                    // netavgprc or avgprc - Average price
+                    // lp or ltp - Last price
                     
-                    const unrealizedPnL = parseFloat(position.urmtom || position.upnl || 0);
-                    const realizedPnL = parseFloat(position.rpnl || 0);
-                    const netQty = parseFloat(position.netqty || position.daybuyqty || 0);
+                    console.log(`  Position ${index + 1}:`, position);
                     
-                    if (unrealizedPnL !== 0 || realizedPnL !== 0 || netQty !== 0) {
-                        console.log(`  📈 ${position.tsym || position.symbol || 'N/A'}:`);
-                        console.log(`     Net Qty: ${netQty}, Unrealized: ₹${unrealizedPnL.toFixed(2)}, Realized: ₹${realizedPnL.toFixed(2)}`);
-                    }
+                    const realizedPnL = parseFloat(position.rpnl || position.RPNL || 0);
+                    const unrealizedPnL = parseFloat(position.urmtom || position.URMTOM || position.upnl || position.UPNL || 0);
+                    const netQty = parseFloat(position.netqty || position.NETQTY || position.daybuyqty || 0);
                     
-                    // Only add unrealized P&L from positions (to avoid double counting with TradeBook)
-                    unrealizedFromPositions += unrealizedPnL;
+                    // Total P&L for this position = Realized + Unrealized
+                    const positionPnL = realizedPnL + unrealizedPnL;
+                    
+                    console.log(`  📈 ${position.tsym || position.TSYM || position.symbol || position.exch || 'N/A'}:`);
+                    console.log(`     Net Qty: ${netQty}, Realized P&L: ₹${realizedPnL.toFixed(2)}, Unrealized P&L: ₹${unrealizedPnL.toFixed(2)}, Position P&L: ₹${positionPnL.toFixed(2)}`);
+                    
+                    // Add to total P&L (sum of rpnl + urmtom as per Flattrade API docs)
+                    totalPnL += positionPnL;
                 });
                 
-                console.log(`📊 PositionBook Unrealized P&L: ₹${unrealizedFromPositions.toFixed(2)}`);
-                totalPnL += unrealizedFromPositions;
+                console.log(`💰 Total P&L calculated from positions: ₹${totalPnL.toFixed(2)}`);
             } else {
-                console.log('📊 No positions found');
+                console.log('📊 No positions found (empty array or no data)');
+                totalPnL = 0;
             }
         }
         
@@ -369,13 +381,18 @@ async function loadOrdersAndPositions() {
         
         // Update P&L display
         const pnlTodayEl = document.getElementById('pnlToday');
+        console.log('🔍 Looking for pnlToday element:', pnlTodayEl ? 'FOUND' : 'NOT FOUND');
+        
         if (pnlTodayEl) {
             const formattedPnL = totalPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            console.log(`💰 Updating P&L display element with: ₹${formattedPnL}`);
             pnlTodayEl.textContent = `₹${formattedPnL}`;
             pnlTodayEl.className = totalPnL >= 0 ? 'value price-up' : 'value price-down';
-            console.log(`💰 Updated P&L display: ₹${formattedPnL}`);
+            console.log(`✅ P&L display updated successfully: ₹${formattedPnL}`);
         } else {
-            console.error('❌ pnlToday element not found');
+            console.error('❌ pnlToday element not found in DOM!');
+            console.error('Available elements with "pnl" in id:', 
+                Array.from(document.querySelectorAll('[id*="pnl"]')).map(el => el.id));
         }
         
         // Get orders for count
@@ -429,9 +446,9 @@ async function loadOrdersAndPositions() {
             console.log(`📊 Updated orders count: ${orderCount}`);
         } else {
             console.error('❌ ordersCount element not found');
-        }
-        
-        console.log('✅ P&L and Orders loaded:', { totalPnL, orderCount, positionsCount: positions.length, totalOrders: orders.length });
+                }
+
+                console.log('✅ P&L and Orders loaded:', { totalPnL, orderCount, positionsCount: positions.length, totalOrders: orders.length });
         
     } catch (error) {
                 console.error('❌ Error loading orders/positions:', error);
@@ -936,7 +953,7 @@ async function placeOrderNow(trantype) {
                 if (result.tpOrderId || result.tpAlertId) msg += `\n🎯 TP GTT Alert ID: ${result.tpOrderId || result.tpAlertId}`;
                 showAlert(msg, 'success');
             } else {
-                showAlert(`✅ Order placed! Order ID: ${result.orderId}`, 'success');
+            showAlert(`✅ Order placed! Order ID: ${result.orderId}`, 'success');
             }
             clearForm();
             loadTodaysOrders();
@@ -949,8 +966,8 @@ async function placeOrderNow(trantype) {
                 if (result.tpOrderId || result.tpAlertId) msg += `\n🎯 TP GTT Alert ID: ${result.tpOrderId || result.tpAlertId}`;
                 if (result.error) msg += `\n⚠️ Errors: ${result.error}`;
                 showAlert(msg, 'warning');
-            } else {
-                console.error('❌ Order failed:', result.error, result.details);
+        } else {
+            console.error('❌ Order failed:', result.error, result.details);
                 showAlert(`❌ Order failed: ${result.error || result.message || 'Unknown error'}`, 'danger');
             }
             if (result.slOrderId || result.slAlertId || result.tpOrderId || result.tpAlertId) {
@@ -1123,7 +1140,7 @@ async function loadTodaysOrders() {
                 const symbol = order.tsym || order.tradingsymbol || 'N/A';
                 const trantype = order.trantype === 'B' || order.transactiontype === 'BUY' ? 'BUY' : 'SELL';
                 const qty = order.qty || order.quantity || 0;
-                const price = order.prc || order.price || 0;
+                const price = parseFloat(order.prc || order.price || 0); // Ensure price is a number
                 const status = order.status || order.orderstatus || 'UNKNOWN';
                 
                 return `
@@ -1159,6 +1176,119 @@ async function loadTodaysOrders() {
 function refreshOrders() {
     loadTodaysOrders();
     loadOrdersAndPositions();
+    loadOrdersTable();
+}
+
+// Load and display orders in the main Orders table
+async function loadOrdersTable() {
+    try {
+        console.log('📋 Loading orders table...');
+        const response = await fetch('/api/orders', { credentials: 'include' });
+        
+        if (!response.ok) {
+            console.error('❌ Orders API error:', response.status, response.statusText);
+            const tbody = document.getElementById('ordersTableBody');
+            if (tbody) {
+                tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4" style="color:#ef4444;">Error loading orders</td></tr>';
+            }
+            return;
+        }
+        
+        const result = await response.json();
+        console.log('📦 Orders table response:', result);
+        
+        const tbody = document.getElementById('ordersTableBody');
+        if (!tbody) {
+            console.error('❌ ordersTableBody element not found');
+            return;
+        }
+        
+        const orders = result.data || result.values || [];
+        
+        if (Array.isArray(orders) && orders.length > 0) {
+            console.log(`✅ Displaying ${orders.length} orders in table`);
+            tbody.innerHTML = orders.map(order => {
+                // FlatTrade OrderBook fields
+                const symbol = order.tsym || order.tradingsymbol || 'N/A';
+                const trantype = order.trantype === 'B' || order.transactiontype === 'BUY' ? 'BUY' : 'SELL';
+                const qty = order.qty || order.quantity || 0;
+                const price = parseFloat(order.prc || order.price || 0); // Ensure price is a number
+                const status = order.status || order.orderstatus || order.stat || 'UNKNOWN';
+                const time = order.exch_tm || order.time || order.exchordtime || 'N/A';
+                const orderId = order.norenordno || order.orderid || 'N/A';
+                
+                // Format status
+                let statusClass = 'text-muted';
+                if (status === 'COMPLETE' || status === 'Ok') {
+                    statusClass = 'text-success';
+                } else if (status === 'OPEN' || status === 'PENDING') {
+                    statusClass = 'text-warning';
+                } else if (status === 'REJECTED' || status === 'REJECT') {
+                    statusClass = 'text-danger';
+                } else if (status === 'CANCELED' || status === 'CANCEL') {
+                    statusClass = 'text-muted';
+                }
+                
+                return `
+                    <tr>
+                        <td>${time}</td>
+                        <td><strong>${symbol}</strong></td>
+                        <td><span class="badge ${trantype === 'BUY' ? 'bg-success' : 'bg-danger'}">${trantype}</span></td>
+                        <td>${qty}</td>
+                        <td>₹${price > 0 ? price.toFixed(2) : 'Market'}</td>
+                        <td><span class="${statusClass}">${status}</span></td>
+                        <td>
+                            ${status === 'OPEN' || status === 'PENDING' ? `
+                                <button class="btn btn-sm btn-outline-danger" onclick="cancelOrder('${orderId}')" title="Cancel Order">
+                                    <i class="fas fa-times"></i>
+                                </button>
+                            ` : ''}
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+        } else {
+            console.log('📋 No orders found for table');
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4" style="color:#64748b;">No orders</td></tr>';
+        }
+    } catch (error) {
+        console.error('❌ Error loading orders table:', error);
+        const tbody = document.getElementById('ordersTableBody');
+        if (tbody) {
+            tbody.innerHTML = '<tr><td colspan="7" class="text-center py-4" style="color:#ef4444;">Error loading orders</td></tr>';
+        }
+    }
+}
+
+// Cancel order function
+async function cancelOrder(orderId) {
+    if (!confirm('Are you sure you want to cancel this order?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/cancel-order', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            credentials: 'include',
+            body: JSON.stringify({ orderId })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+            alert('Order cancelled successfully');
+            loadOrdersTable(); // Refresh table
+            loadTodaysOrders(); // Refresh today's orders
+        } else {
+            alert('Failed to cancel order: ' + (result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('Error cancelling order:', error);
+        alert('Error cancelling order: ' + error.message);
+    }
 }
 
 // Clear form
@@ -1339,6 +1469,22 @@ document.addEventListener('DOMContentLoaded', function() {
     // Auto-refresh price every 1 minute (60 seconds)
     setInterval(refreshPrice, 60000);
     
+    // Auto-refresh P&L and orders every 30 seconds
+    setInterval(() => {
+        if (isAuthenticated) {
+            console.log('🔄 Auto-refreshing P&L and orders...');
+            loadOrdersAndPositions();
+            loadOrdersTable(); // Also refresh orders table
+        }
+    }, 30000);
+    
+    // Load orders table on initial load after auth check
+    setTimeout(() => {
+        if (isAuthenticated) {
+            loadOrdersTable();
+        }
+    }, 2000);
+    
     // Initialize option type and product buttons
     selectOptionType('CE'); // Set CE as default
     selectProduct('MIS'); // Set MIS as default
@@ -1358,5 +1504,292 @@ document.addEventListener('DOMContentLoaded', function() {
         strikeInput.addEventListener('wheel', handleStrikeScroll, { passive: false });
     }
     
-    console.log('⏰ Auto-refresh enabled: Auth (30s), Price (60s)');
+    console.log('⏰ Auto-refresh enabled: Auth (30s), Price (60s), P&L (30s)');
+    
+    // Load positions page when hash changes to #positions
+    window.addEventListener('hashchange', function() {
+        if (window.location.hash === '#positions') {
+            loadPositionsPage();
+        }
+    });
+    
+    // Load positions page on initial load if hash is #positions
+    if (window.location.hash === '#positions') {
+        loadPositionsPage();
+    }
 });
+
+// Load positions page with P&L and open orders
+async function loadPositionsPage() {
+    try {
+        console.log('📊 Loading positions page...');
+        
+        // Load positions
+        const positionsResponse = await fetch('/api/positions', { credentials: 'include' });
+        
+        if (!positionsResponse.ok) {
+            console.error('❌ Positions API error:', positionsResponse.status);
+            document.getElementById('positionsTableBody').innerHTML = `
+                <tr>
+                    <td colspan="9" class="text-center py-4" style="color:#ef4444;">
+                        Error loading positions
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+        
+        const positionsResult = await positionsResponse.json();
+        
+        // Handle API error responses (stat: "Not_Ok")
+        if (positionsResult.stat === 'Not_Ok' || positionsResult.stat === 'not_ok') {
+            const errorMsg = positionsResult.emsg || positionsResult.message || 'No positions found';
+            console.log(`⚠️ API returned Not_Ok: ${errorMsg}`);
+            
+            document.getElementById('positionsTableBody').innerHTML = `
+                <tr>
+                    <td colspan="9" class="text-center py-4" style="color:#64748b;">
+                        ${errorMsg === 'no data' ? 'No open positions' : errorMsg}
+                    </td>
+                </tr>
+            `;
+            
+            // Reset P&L displays
+            const totalPnLEl = document.getElementById('positionsTotalPnL');
+            const realizedPnLEl = document.getElementById('positionsRealizedPnL');
+            const unrealizedPnLEl = document.getElementById('positionsUnrealizedPnL');
+            const positionsCountEl = document.getElementById('positionsCount');
+            
+            if (totalPnLEl) totalPnLEl.textContent = '₹0.00';
+            if (realizedPnLEl) realizedPnLEl.textContent = '₹0.00';
+            if (unrealizedPnLEl) unrealizedPnLEl.textContent = '₹0.00';
+            if (positionsCountEl) positionsCountEl.textContent = '0';
+            
+            return;
+        }
+        
+        const positions = positionsResult.data || positionsResult || [];
+        
+        // Handle different response formats (array, object with values, etc.)
+        let positionsArray = [];
+        if (Array.isArray(positions)) {
+            positionsArray = positions;
+        } else if (positionsResult.values && Array.isArray(positionsResult.values)) {
+            positionsArray = positionsResult.values;
+        }
+        
+        // Calculate P&L totals from ALL positions (both open and closed)
+        // Realized P&L can come from closed positions, Unrealized P&L from open positions
+        // According to Flattrade API docs:
+        // - rpnl: Realized P&L (profit/loss from closed positions)
+        // - urmtom: Unrealized P&L/MTM (mark-to-market for open positions)
+        let totalRealizedPnL = 0;
+        let totalUnrealizedPnL = 0;
+        let totalPnL = 0;
+        
+        // Calculate P&L from ALL positions first
+        positionsArray.forEach(position => {
+            const realizedPnL = parseFloat(position.rpnl || position.RPNL || 0);
+            const unrealizedPnL = parseFloat(position.urmtom || position.URMTOM || position.upnl || position.UPNL || 0);
+            
+            // Debug logging for positions with realized P&L
+            if (realizedPnL !== 0) {
+                const symbol = position.tsym || position.TSYM || 'N/A';
+                console.log(`💰 Realized P&L found: ${symbol} = ₹${realizedPnL.toFixed(2)}`);
+            }
+            
+            totalRealizedPnL += realizedPnL;
+            totalUnrealizedPnL += unrealizedPnL;
+            totalPnL += (realizedPnL + unrealizedPnL);
+        });
+        
+        console.log(`📊 P&L Summary: Realized=₹${totalRealizedPnL.toFixed(2)}, Unrealized=₹${totalUnrealizedPnL.toFixed(2)}, Total=₹${totalPnL.toFixed(2)}`);
+        
+        // Filter open positions: netqty != 0 (handle both string and number formats)
+        // According to Flattrade API docs: "Open positions" are those with non-zero net quantity
+        // Note: We filter AFTER calculating P&L because closed positions may have realized P&L
+        const openPositions = positionsArray.filter(pos => {
+            // Handle both string "0" and number 0 formats
+            const netQtyStr = String(pos.netqty || pos.NETQTY || '0').trim();
+            const netQtyNum = parseFloat(netQtyStr);
+            
+            // Position is "open" if netqty is not "0" (as string) or not 0 (as number)
+            return netQtyStr !== '0' && netQtyNum !== 0;
+        });
+        
+        // Update P&L summary
+        const totalPnLEl = document.getElementById('positionsTotalPnL');
+        const realizedPnLEl = document.getElementById('positionsRealizedPnL');
+        const unrealizedPnLEl = document.getElementById('positionsUnrealizedPnL');
+        const positionsCountEl = document.getElementById('positionsCount');
+        
+        if (totalPnLEl) {
+            totalPnLEl.textContent = `₹${totalPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            totalPnLEl.className = totalPnL >= 0 ? 'value price-up' : 'value price-down';
+        }
+        
+        if (realizedPnLEl) {
+            realizedPnLEl.textContent = `₹${totalRealizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            realizedPnLEl.className = totalRealizedPnL >= 0 ? 'value price-up' : 'value price-down';
+        }
+        
+        if (unrealizedPnLEl) {
+            unrealizedPnLEl.textContent = `₹${totalUnrealizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+            unrealizedPnLEl.className = totalUnrealizedPnL >= 0 ? 'value price-up' : 'value price-down';
+        }
+        
+        if (positionsCountEl) {
+            positionsCountEl.textContent = openPositions.length;
+        }
+        
+        // Display ALL positions in "All Positions" table (including closed positions)
+        const positionsTableBody = document.getElementById('positionsTableBody');
+        if (positionsTableBody) {
+            if (positionsArray.length === 0) {
+                positionsTableBody.innerHTML = `
+                    <tr>
+                        <td colspan="9" class="text-center py-4" style="color:#64748b;">
+                            No positions found
+                        </td>
+                    </tr>
+                `;
+            } else {
+                positionsTableBody.innerHTML = positionsArray.map(position => {
+                    const symbol = position.tsym || position.TSYM || position.symbol || 'N/A';
+                    const exch = position.exch || position.EXCH || 'N/A';
+                    const product = position.s_prdt_ali || position.S_PRDT_ALI || position.prd || 'N/A';
+                    const netQty = parseFloat(position.netqty || position.NETQTY || 0);
+                    const avgPrice = parseFloat(position.netavgprc || position.NETAVGPRC || position.avgprc || position.AVGPRC || 0);
+                    const ltp = parseFloat(position.lp || position.LP || position.ltp || position.LTP || 0);
+                    const realizedPnL = parseFloat(position.rpnl || position.RPNL || 0);
+                    const unrealizedPnL = parseFloat(position.urmtom || position.URMTOM || position.upnl || position.UPNL || 0);
+                    const positionPnL = realizedPnL + unrealizedPnL;
+                    
+                    // Color coding: green for positive, red for negative
+                    const qtyColor = netQty >= 0 ? 'text-success' : 'text-danger';
+                    const pnlColor = positionPnL >= 0 ? 'text-success' : 'text-danger';
+                    const realizedColor = realizedPnL >= 0 ? 'text-success' : (realizedPnL < 0 ? 'text-danger' : 'text-muted');
+                    const unrealizedColor = unrealizedPnL >= 0 ? 'text-success' : (unrealizedPnL < 0 ? 'text-danger' : 'text-muted');
+                    
+                    // Show "CLOSED" badge if netqty is 0
+                    const statusBadge = netQty === 0 ? '<span class="badge badge-red">CLOSED</span>' : '';
+                    
+                    return `
+                        <tr>
+                            <td><strong>${symbol}</strong> ${statusBadge}</td>
+                            <td>${exch}</td>
+                            <td><span class="badge ${product === 'MIS' ? 'badge-green' : 'badge-yellow'}">${product}</span></td>
+                            <td class="${qtyColor}"><strong>${netQty}</strong></td>
+                            <td>₹${avgPrice.toFixed(2)}</td>
+                            <td>₹${ltp.toFixed(2)}</td>
+                            <td class="${realizedColor}">₹${realizedPnL.toFixed(2)}</td>
+                            <td class="${unrealizedColor}">₹${unrealizedPnL.toFixed(2)}</td>
+                            <td class="${pnlColor}"><strong>₹${positionPnL.toFixed(2)}</strong></td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+        }
+        
+        // Display ONLY OPEN positions in "Open Orders" section (netqty != 0)
+        loadOpenPositions(openPositions);
+        
+    } catch (error) {
+        console.error('❌ Error loading positions page:', error);
+        const positionsTableBody = document.getElementById('positionsTableBody');
+        if (positionsTableBody) {
+            positionsTableBody.innerHTML = `
+                <tr>
+                    <td colspan="9" class="text-center py-4" style="color:#ef4444;">
+                        Error: ${error.message}
+                    </td>
+                </tr>
+            `;
+        }
+    }
+}
+
+// Load and display ONLY OPEN positions in "Open Orders" section
+async function loadOpenPositions(openPositions) {
+    try {
+        const openOrdersContainer = document.getElementById('openOrdersContainer');
+        if (!openOrdersContainer) {
+            console.error('❌ openOrdersContainer element not found');
+            return;
+        }
+        
+        // openPositions should already be filtered (netqty != 0)
+        if (!openPositions || openPositions.length === 0) {
+            openOrdersContainer.innerHTML = `
+                <div class="text-center py-3" style="color:#64748b;">
+                    <i class="fas fa-check-circle me-2"></i> No open positions
+                </div>
+            `;
+            return;
+        }
+        
+        console.log(`✅ Displaying ${openPositions.length} open positions in Open Orders section`);
+        
+        openOrdersContainer.innerHTML = `
+            <div style="max-height:400px;overflow-y:auto;">
+                <table class="table-modern">
+                    <thead>
+                        <tr>
+                            <th>Symbol</th>
+                            <th>Exchange</th>
+                            <th>Product</th>
+                            <th>Net Qty</th>
+                            <th>Avg Price</th>
+                            <th>LTP</th>
+                            <th>Realized P&L</th>
+                            <th>Unrealized P&L</th>
+                            <th>Total P&L</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${openPositions.map(position => {
+                            const symbol = position.tsym || position.TSYM || position.symbol || 'N/A';
+                            const exch = position.exch || position.EXCH || 'N/A';
+                            const product = position.s_prdt_ali || position.S_PRDT_ALI || position.prd || 'N/A';
+                            const netQty = parseFloat(position.netqty || position.NETQTY || 0);
+                            const avgPrice = parseFloat(position.netavgprc || position.NETAVGPRC || position.avgprc || position.AVGPRC || 0);
+                            const ltp = parseFloat(position.lp || position.LP || position.ltp || position.LTP || 0);
+                            const realizedPnL = parseFloat(position.rpnl || position.RPNL || 0);
+                            const unrealizedPnL = parseFloat(position.urmtom || position.URMTOM || position.upnl || position.UPNL || 0);
+                            const positionPnL = realizedPnL + unrealizedPnL;
+                            
+                            const qtyColor = netQty >= 0 ? 'text-success' : 'text-danger';
+                            const pnlColor = positionPnL >= 0 ? 'text-success' : 'text-danger';
+                            const realizedColor = realizedPnL >= 0 ? 'text-success' : (realizedPnL < 0 ? 'text-danger' : 'text-muted');
+                            const unrealizedColor = unrealizedPnL >= 0 ? 'text-success' : (unrealizedPnL < 0 ? 'text-danger' : 'text-muted');
+                            
+                            return `
+                                <tr>
+                                    <td><strong>${symbol}</strong></td>
+                                    <td>${exch}</td>
+                                    <td><span class="badge ${product === 'MIS' ? 'badge-green' : 'badge-yellow'}">${product}</span></td>
+                                    <td class="${qtyColor}"><strong>${netQty}</strong></td>
+                                    <td>₹${avgPrice.toFixed(2)}</td>
+                                    <td>₹${ltp.toFixed(2)}</td>
+                                    <td class="${realizedColor}">₹${realizedPnL.toFixed(2)}</td>
+                                    <td class="${unrealizedColor}">₹${unrealizedPnL.toFixed(2)}</td>
+                                    <td class="${pnlColor}"><strong>₹${positionPnL.toFixed(2)}</strong></td>
+                                </tr>
+                            `;
+                        }).join('')}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    } catch (error) {
+        console.error('❌ Error loading open positions:', error);
+        const openOrdersContainer = document.getElementById('openOrdersContainer');
+        if (openOrdersContainer) {
+            openOrdersContainer.innerHTML = `
+                <div class="text-center py-3" style="color:#ef4444;">
+                    Error loading open positions
+                </div>
+            `;
+        }
+    }
+}

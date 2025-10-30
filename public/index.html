@@ -345,7 +345,10 @@
                             </div>
             <div class="stat-box">
                 <div class="label">P&L Today</div>
-                <div class="value price-up" id="pnlToday">₹0</div>
+                <div class="value price-up" id="pnlToday">₹0.00</div>
+                <button class="btn btn-sm btn-outline-light mt-1" onclick="loadOrdersAndPositions()" style="font-size:10px;padding:2px 6px;" title="Refresh P&L">
+                    <i class="fas fa-sync"></i>
+                </button>
                         </div>
             <div class="stat-box">
                 <div class="label">Orders</div>
@@ -555,6 +558,87 @@
                             </tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Positions Section -->
+        <div class="row mt-4">
+            <div class="col-12" id="positions">
+                <div class="card-modern">
+                    <div class="card-header-modern">
+                        <h6 class="m-0"><i class="fas fa-briefcase me-2"></i> Positions & P&L</h6>
+                        <button class="btn btn-sm btn-outline-light" onclick="loadPositionsPage()">
+                            <i class="fas fa-sync"></i> Refresh
+                        </button>
+                    </div>
+                    
+                    <!-- P&L Summary -->
+                    <div class="row mb-4">
+                        <div class="col-md-3">
+                            <div class="stat-box text-center">
+                                <div class="label">Total P&L Today</div>
+                                <div class="value" id="positionsTotalPnL" style="font-size:24px;">₹0.00</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-box text-center">
+                                <div class="label">Realized P&L</div>
+                                <div class="value" id="positionsRealizedPnL" style="font-size:20px;">₹0.00</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-box text-center">
+                                <div class="label">Unrealized P&L</div>
+                                <div class="value" id="positionsUnrealizedPnL" style="font-size:20px;">₹0.00</div>
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <div class="stat-box text-center">
+                                <div class="label">Open Positions</div>
+                                <div class="value" id="positionsCount" style="font-size:20px;">0</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Open Positions Summary -->
+                    <div class="mb-4">
+                        <h6 class="mb-3"><i class="fas fa-clock me-2"></i> Open Positions</h6>
+                        <div id="openOrdersContainer">
+                            <div class="text-center py-3" style="color:#64748b;">
+                                <i class="fas fa-spinner fa-spin me-2"></i> Loading...
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Positions Table -->
+                    <div>
+                        <h6 class="mb-3"><i class="fas fa-briefcase me-2"></i> All Positions</h6>
+                        <div style="max-height:500px;overflow-y:auto;">
+                            <table class="table-modern">
+                                <thead>
+                                    <tr>
+                                        <th>Symbol</th>
+                                        <th>Exchange</th>
+                                        <th>Product</th>
+                                        <th>Net Qty</th>
+                                        <th>Avg Price</th>
+                                        <th>LTP</th>
+                                        <th>Realized P&L</th>
+                                        <th>Unrealized P&L</th>
+                                        <th>Total P&L</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="positionsTableBody">
+                                    <tr>
+                                        <td colspan="9" class="text-center py-4" style="color:#64748b;">
+                                            <i class="fas fa-spinner fa-spin me-2"></i> Loading positions...
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
