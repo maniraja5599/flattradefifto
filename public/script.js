@@ -286,47 +286,86 @@ async function loadOrdersAndPositions() {
     try {
         console.log('🔄 Loading orders and positions...');
         
-        // Get positions for P&L calculation
+        let totalPnL = 0;
+        let positions = [];
+        
+        // First, get TradeBook for today's realized P&L (executed trades)
+        try {
+            const tradeBookResponse = await fetch('/api/trade-book', { credentials: 'include' });
+            if (tradeBookResponse.ok) {
+                const tradeBookResult = await tradeBookResponse.json();
+                const trades = tradeBookResult.data || tradeBookResult.values || tradeBookResult || [];
+                
+                if (Array.isArray(trades) && trades.length > 0) {
+                    console.log(`📋 TradeBook: ${trades.length} trades today`);
+                    
+                    // Calculate realized P&L from trades
+                    let tradePnL = 0;
+                    trades.forEach(trade => {
+                        // TradeBook fields: pnl, rpnl, or calculate from price difference
+                        const tradePnLValue = parseFloat(trade.pnl || trade.rpnl || 0);
+                        tradePnL += tradePnLValue;
+                        
+                        if (tradePnLValue !== 0) {
+                            console.log(`  💰 ${trade.tsym || trade.symbol || 'N/A'}: P&L ₹${tradePnLValue.toFixed(2)}`);
+                        }
+                    });
+                    
+                    console.log(`💰 TradeBook Total P&L: ₹${tradePnL.toFixed(2)}`);
+                    totalPnL += tradePnL;
+                } else {
+                    console.log('📊 No trades found in TradeBook');
+                }
+            } else {
+                console.warn('⚠️ TradeBook request failed:', tradeBookResponse.status);
+            }
+        } catch (tradeError) {
+            console.log('⚠️ TradeBook not available:', tradeError.message);
+        }
+        
+        // Get positions for unrealized P&L (current open positions)
         const positionsResponse = await fetch('/api/positions', { credentials: 'include' });
         
         if (!positionsResponse.ok) {
             console.error('❌ Positions API error:', positionsResponse.status, positionsResponse.statusText);
-            return;
-        }
-        
-        const positionsResult = await positionsResponse.json();
-        console.log('📦 Raw positions response:', positionsResult);
-        
-        let totalPnL = 0;
-        const positions = positionsResult.data || positionsResult || [];
-        
-        if (Array.isArray(positions) && positions.length > 0) {
-            console.log('📊 Position Details:');
-            positions.forEach(position => {
-                // FlatTrade PositionBook API fields:
-                // urmtom - Unrealized Mark-to-Market (current P&L for open position)
-                // rpnl - Realized P&L (from closed/squared off positions)
-                // netqty - Net quantity (can be used to check if position is open)
-                
-                const unrealizedPnL = parseFloat(position.urmtom || 0);
-                const realizedPnL = parseFloat(position.rpnl || 0);
-                const netQty = parseFloat(position.netqty || position.daybuyqty || 0);
-                
-                // Total P&L for this position
-                const positionPnL = unrealizedPnL + realizedPnL;
-                
-                console.log(`  📈 ${position.tsym || position.symbol || 'N/A'}:`);
-                console.log(`     Net Qty: ${netQty}, Unrealized: ₹${unrealizedPnL.toFixed(2)}, Realized: ₹${realizedPnL.toFixed(2)}, Total: ₹${positionPnL.toFixed(2)}`);
-                
-                totalPnL += positionPnL;
-            });
-            
-            console.log(`📊 Total P&L (Today): ₹${totalPnL.toFixed(2)}`);
         } else {
-            console.log('📊 No positions found');
+            const positionsResult = await positionsResponse.json();
+            console.log('📦 Raw positions response:', positionsResult);
+            
+            positions = positionsResult.data || positionsResult || [];
+            
+            if (Array.isArray(positions) && positions.length > 0) {
+                console.log('📊 Position Details:');
+                let unrealizedFromPositions = 0;
+                
+                positions.forEach(position => {
+                    // FlatTrade PositionBook API fields:
+                    // urmtom - Unrealized Mark-to-Market (current P&L for open position)
+                    // upnl - Unrealized P&L (alternative field name)
+                    // rpnl - Realized P&L (from closed positions in position book)
+                    // netqty - Net quantity (can be used to check if position is open)
+                    
+                    const unrealizedPnL = parseFloat(position.urmtom || position.upnl || 0);
+                    const realizedPnL = parseFloat(position.rpnl || 0);
+                    const netQty = parseFloat(position.netqty || position.daybuyqty || 0);
+                    
+                    if (unrealizedPnL !== 0 || realizedPnL !== 0 || netQty !== 0) {
+                        console.log(`  📈 ${position.tsym || position.symbol || 'N/A'}:`);
+                        console.log(`     Net Qty: ${netQty}, Unrealized: ₹${unrealizedPnL.toFixed(2)}, Realized: ₹${realizedPnL.toFixed(2)}`);
+                    }
+                    
+                    // Only add unrealized P&L from positions (to avoid double counting with TradeBook)
+                    unrealizedFromPositions += unrealizedPnL;
+                });
+                
+                console.log(`📊 PositionBook Unrealized P&L: ₹${unrealizedFromPositions.toFixed(2)}`);
+                totalPnL += unrealizedFromPositions;
+            } else {
+                console.log('📊 No positions found');
+            }
         }
         
-        console.log('📊 Positions data:', positions.length, 'positions, Total P&L:', totalPnL);
+        console.log(`💰 Final Total P&L (Today): ₹${totalPnL.toFixed(2)}`);
         
         // Update P&L display
         const pnlTodayEl = document.getElementById('pnlToday');
@@ -392,25 +431,7 @@ async function loadOrdersAndPositions() {
             console.error('❌ ordersCount element not found');
         }
         
-                // Also fetch trade book for additional P&L verification
-                try {
-                    const tradeBookResponse = await fetch('/api/trade-book', { credentials: 'include' });
-                    if (tradeBookResponse.ok) {
-                        const tradeBookResult = await tradeBookResponse.json();
-                        const trades = tradeBookResult.data || tradeBookResult.values || [];
-                        
-                        if (Array.isArray(trades) && trades.length > 0) {
-                            console.log(`📋 TradeBook: ${trades.length} trades today`);
-                            // Could use trades for additional P&L calculation if needed
-                        }
-                    } else {
-                        console.log('⚠️ TradeBook request failed:', tradeBookResponse.status);
-                    }
-                } catch (tradeError) {
-                    console.log('⚠️ TradeBook not available:', tradeError.message);
-                }
-
-                console.log('✅ P&L and Orders loaded:', { totalPnL, orderCount, positionsCount: positions.length, totalOrders: orders.length });
+        console.log('✅ P&L and Orders loaded:', { totalPnL, orderCount, positionsCount: positions.length, totalOrders: orders.length });
         
     } catch (error) {
                 console.error('❌ Error loading orders/positions:', error);
@@ -538,18 +559,223 @@ function selectQuickStrike(offset) {
     showAlert(`Selected ${label}: ${selectedStrike}`, 'info');
 }
 
+// Select option type (CE/PE)
+function selectOptionType(type) {
+    document.getElementById('optionType').value = type;
+    
+    // Update button styles
+    const ceBtn = document.getElementById('typeCE');
+    const peBtn = document.getElementById('typePE');
+    
+    if (type === 'CE') {
+        ceBtn.style.background = '#22c55e';
+        ceBtn.style.opacity = '1';
+        ceBtn.style.fontWeight = 'bold';
+        peBtn.style.background = '#475569';
+        peBtn.style.opacity = '0.6';
+        peBtn.style.fontWeight = 'normal';
+    } else {
+        peBtn.style.background = '#ef4444';
+        peBtn.style.opacity = '1';
+        peBtn.style.fontWeight = 'bold';
+        ceBtn.style.background = '#475569';
+        ceBtn.style.opacity = '0.6';
+        ceBtn.style.fontWeight = 'normal';
+    }
+}
+
+// Select product type (MIS/NRML)
+function selectProduct(product) {
+    document.getElementById('product').value = product;
+    
+    // Update button styles
+    const misBtn = document.getElementById('productMIS');
+    const nrmlBtn = document.getElementById('productNRML');
+    
+    if (product === 'MIS') {
+        misBtn.style.background = '#3b82f6';
+        misBtn.style.opacity = '1';
+        misBtn.style.fontWeight = 'bold';
+        nrmlBtn.style.background = '#475569';
+        nrmlBtn.style.opacity = '0.6';
+        nrmlBtn.style.fontWeight = 'normal';
+    } else {
+        nrmlBtn.style.background = '#6366f1';
+        nrmlBtn.style.opacity = '1';
+        nrmlBtn.style.fontWeight = 'bold';
+        misBtn.style.background = '#475569';
+        misBtn.style.opacity = '0.6';
+        misBtn.style.fontWeight = 'normal';
+    }
+}
+
+// Handle mouse wheel scroll on strike price input
+function handleStrikeScroll(event) {
+    event.preventDefault(); // Prevent default scroll behavior
+    
+    const strikeInput = document.getElementById('strikePrice');
+    const currentStrike = parseFloat(strikeInput.value) || 0;
+    
+    // Get current spot price to calculate ATM
+    const spotPriceText = document.getElementById('currentPrice')?.textContent || '';
+    const atmPrice = parseFloat(spotPriceText.replace(/,/g, '')) || currentPrice || 0;
+    const atmStrike = Math.round(atmPrice / 50) * 50; // Round to nearest 50
+    
+    // Get step value (default 50 for strike prices)
+    const step = parseFloat(strikeInput.step) || 50;
+    
+    // Determine scroll direction
+    const delta = event.deltaY < 0 ? step : -step; // Scroll up = +step, Scroll down = -step
+    
+    // Calculate difference from ATM
+    const diffFromATM = currentStrike - atmStrike;
+    
+    // Round current difference to nearest step
+    const roundedDiff = Math.round(diffFromATM / step) * step;
+    
+    // Calculate new difference from ATM
+    const newDiffFromATM = roundedDiff + delta;
+    
+    // Calculate new strike price relative to ATM
+    const newStrike = atmStrike + newDiffFromATM;
+    
+    // Ensure minimum is 0 and round to nearest step
+    const finalStrike = Math.max(0, Math.round(newStrike / step) * step);
+    
+    // Update strike price
+    strikeInput.value = finalStrike;
+}
+
+// Prevent negative lot size when using arrow keys
+function preventNegativeLot(event) {
+    const lotInput = document.getElementById('quantity');
+    const currentLot = parseFloat(lotInput.value) || 0;
+    
+    // Handle arrow down key
+    if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        const newLot = Math.max(1, currentLot - 1);
+        lotInput.value = newLot;
+        updateQuantityFromLot();
+        return false;
+    }
+    
+    // Handle arrow up key
+    if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        const newLot = currentLot + 1;
+        lotInput.value = newLot;
+        updateQuantityFromLot();
+        return false;
+    }
+    
+    // Allow other keys (numbers, backspace, delete, etc.)
+    return true;
+}
+
+// Handle mouse wheel scroll on lot size input
+function handleLotScroll(event) {
+    event.preventDefault(); // Prevent default scroll behavior
+    
+    const lotInput = document.getElementById('quantity');
+    const currentLot = parseFloat(lotInput.value) || 0;
+    
+    // Round to nearest integer to ensure whole number increments
+    const currentLotInt = Math.round(currentLot);
+    
+    // Determine scroll direction
+    const delta = event.deltaY < 0 ? 1 : -1; // Scroll up = +1, Scroll down = -1
+    
+    // Calculate new lot size (minimum 1, always whole number)
+    const newLot = Math.max(1, currentLotInt + delta);
+    
+    // Update lot size as whole number
+    lotInput.value = newLot;
+    
+    // Update quantity display
+    updateQuantityFromLot();
+}
+
+// Update quantity from lot size (when lot size changes)
+function updateQuantityFromLot() {
+    const lotInput = document.getElementById('quantity');
+    const qtyInput = document.getElementById('actualQuantity');
+    const lotSize = parseFloat(lotInput.value) || 0;
+    
+    // Ensure lot size is not negative
+    if (lotSize < 1) {
+        lotInput.value = 1;
+        lotSize = 1;
+    }
+    
+    // Get lot size multiplier based on symbol
+    const symbol = document.getElementById('symbol').value;
+    let multiplier = 75; // Default NIFTY
+    
+    if (symbol === 'NIFTY') {
+        multiplier = 75; // 1 lot = 75 qty
+    } else if (symbol === 'BANKNIFTY') {
+        multiplier = 35; // 1 lot = 35 qty
+    } else if (symbol === 'FINNIFTY') {
+        multiplier = 40; // 1 lot = 40 qty
+    }
+    
+    const calculatedQty = Math.round(lotSize * multiplier);
+    
+    if (qtyInput) {
+        qtyInput.value = calculatedQty;
+    }
+}
+
+// Update lot size from quantity (when quantity changes)
+function updateLotFromQuantity() {
+    const lotInput = document.getElementById('quantity');
+    const qtyInput = document.getElementById('actualQuantity');
+    const qty = parseFloat(qtyInput.value) || 0;
+    
+    // Get lot size multiplier based on symbol
+    const symbol = document.getElementById('symbol').value;
+    let multiplier = 75; // Default NIFTY
+    
+    if (symbol === 'NIFTY') {
+        multiplier = 75; // 1 lot = 75 qty
+    } else if (symbol === 'BANKNIFTY') {
+        multiplier = 35; // 1 lot = 35 qty
+    } else if (symbol === 'FINNIFTY') {
+        multiplier = 40; // 1 lot = 40 qty
+    }
+    
+    const calculatedLot = (qty / multiplier).toFixed(2);
+    
+    if (lotInput) {
+        lotInput.value = calculatedLot;
+    }
+}
+
+// Update quantity display (lot size and calculated quantity) - Legacy function, keeping for compatibility
+function updateQuantityDisplay() {
+    updateQuantityFromLot(); // Use the new function
+}
+
 // Toggle price field based on order type
 function togglePriceField() {
     const orderType = document.getElementById('orderType').value;
     const priceSection = document.getElementById('priceSection');
     const priceInput = document.getElementById('price');
+    const gttSection = document.getElementById('gttSection');
     
     if (orderType === 'MARKET') {
         priceSection.style.display = 'none';
         priceInput.required = false;
-    } else {
+        if (gttSection) gttSection.style.display = 'none';
+    } else if (orderType === 'LIMIT') {
         priceSection.style.display = 'block';
         priceInput.required = true;
+        if (gttSection) gttSection.style.display = 'none';
+    } else if (orderType === 'GTT_OCO') {
+        priceSection.style.display = 'none';
+        priceInput.required = false;
+        if (gttSection) gttSection.style.display = 'flex';
     }
 }
 
@@ -559,15 +785,32 @@ function createOrderFromForm(trantype) {
     const expiry = document.getElementById('expiry').value;
     const strike = document.getElementById('strikePrice').value;
     const optionType = document.getElementById('optionType').value;
-    const quantity = document.getElementById('quantity').value;
+    const lotSize = parseInt(document.getElementById('quantity').value) || 0;
+    
+    // Calculate actual quantity based on lot size and symbol multiplier
+    let multiplier = 75; // Default NIFTY
+    if (symbol === 'NIFTY') {
+        multiplier = 75; // 1 lot = 75 qty
+    } else if (symbol === 'BANKNIFTY') {
+        multiplier = 35; // 1 lot = 35 qty
+    } else if (symbol === 'FINNIFTY') {
+        multiplier = 40; // 1 lot = 40 qty
+    }
+    
+    // Use actual quantity input if available, otherwise calculate from lot size
+    const actualQtyInput = document.getElementById('actualQuantity');
+    const quantity = actualQtyInput ? parseInt(actualQtyInput.value) || 0 : (lotSize * multiplier);
+    
     const productEl = document.getElementById('product');
     const product = productEl ? productEl.value : 'MIS';
     const orderTypeEl = document.getElementById('orderType');
     const orderType = orderTypeEl ? orderTypeEl.value : 'Market';
     const priceEl = document.getElementById('price');
     const price = priceEl ? priceEl.value : '';
+    const gttSL = document.getElementById('gttSL')?.value || '';
+    const gttTP = document.getElementById('gttTP')?.value || '';
     
-    if (!strike || !quantity) {
+    if (!strike || !lotSize) {
         showAlert('Please enter strike price and quantity', 'warning');
         return null;
     }
@@ -575,6 +818,13 @@ function createOrderFromForm(trantype) {
     if (orderType === 'Limit' && !price) {
         showAlert('Please enter price for limit orders', 'warning');
         return null;
+    }
+
+    if (orderType === 'GTT_OCO') {
+        if (!gttSL && !gttTP) {
+            showAlert('Enter at least one trigger: SL or Target', 'warning');
+            return null;
+        }
     }
     
     // Create trading symbol in FlatTrade format: SYMBOLDDMMMYYC/PSTRIKE
@@ -632,7 +882,11 @@ function createOrderFromForm(trantype) {
         price: orderType === 'Market' ? null : parseFloat(price),
         product,
         validity: 'DAY',
-        exchange: 'NFO'
+        exchange: 'NFO',
+        gtt: orderType === 'GTT_OCO' ? {
+            slTrigger: gttSL ? parseFloat(gttSL) : null,
+            tpTrigger: gttTP ? parseFloat(gttTP) : null
+        } : null
     };
 }
 
@@ -664,7 +918,8 @@ async function placeOrderNow(trantype) {
         console.log('📤 Placing order:', order);
         showAlert('Placing order...', 'info');
         
-        const response = await fetch('/api/place-single-order', {
+        const endpoint = order.orderType === 'GTT_OCO' ? '/api/place-gtt-oco' : '/api/place-single-order';
+        const response = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'include',
@@ -675,13 +930,34 @@ async function placeOrderNow(trantype) {
         console.log('📥 Order response:', result);
         
         if (result.success) {
-            showAlert(`✅ Order placed! Order ID: ${result.orderId}`, 'success');
+            if (order.orderType === 'GTT_OCO') {
+                let msg = `✅ GTT alerts placed successfully!`;
+                if (result.slOrderId || result.slAlertId) msg += `\n🛡️ SL GTT Alert ID: ${result.slOrderId || result.slAlertId}`;
+                if (result.tpOrderId || result.tpAlertId) msg += `\n🎯 TP GTT Alert ID: ${result.tpOrderId || result.tpAlertId}`;
+                showAlert(msg, 'success');
+            } else {
+                showAlert(`✅ Order placed! Order ID: ${result.orderId}`, 'success');
+            }
             clearForm();
             loadTodaysOrders();
             loadOrdersAndPositions(); // Refresh P&L
         } else {
-            console.error('❌ Order failed:', result.error, result.details);
-            showAlert(`❌ Order failed: ${result.error}`, 'danger');
+            // Handle partial success for GTT orders
+            if (order.orderType === 'GTT_OCO' && (result.slOrderId || result.slAlertId || result.tpOrderId || result.tpAlertId)) {
+                let msg = `⚠️ GTT alerts partially placed:`;
+                if (result.slOrderId || result.slAlertId) msg += `\n🛡️ SL GTT Alert ID: ${result.slOrderId || result.slAlertId}`;
+                if (result.tpOrderId || result.tpAlertId) msg += `\n🎯 TP GTT Alert ID: ${result.tpOrderId || result.tpAlertId}`;
+                if (result.error) msg += `\n⚠️ Errors: ${result.error}`;
+                showAlert(msg, 'warning');
+            } else {
+                console.error('❌ Order failed:', result.error, result.details);
+                showAlert(`❌ Order failed: ${result.error || result.message || 'Unknown error'}`, 'danger');
+            }
+            if (result.slOrderId || result.slAlertId || result.tpOrderId || result.tpAlertId) {
+                // If any GTT alert succeeded, refresh anyway
+                loadTodaysOrders();
+                loadOrdersAndPositions();
+            }
         }
     } catch (error) {
         console.error('❌ Error placing order:', error);
@@ -755,7 +1031,8 @@ async function placeAllOrders() {
         try {
             console.log('📤 Placing basket order:', order);
             
-            const response = await fetch('/api/place-single-order', {
+            const endpoint = order.orderType === 'GTT_OCO' ? '/api/place-gtt-oco' : '/api/place-single-order';
+            const response = await fetch(endpoint, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 credentials: 'include',
@@ -767,11 +1044,25 @@ async function placeAllOrders() {
             
             if (result.success) {
                 success++;
-                console.log(`✅ Order ${success} placed: ${result.orderId}`);
+                const alertId = result.slOrderId || result.slAlertId || result.tpOrderId || result.tpAlertId || result.orderId;
+                console.log(`✅ GTT alerts placed for order ${success}`);
+                if (order.orderType === 'GTT_OCO') {
+                    console.log(`   SL GTT Alert ID: ${result.slOrderId || result.slAlertId || 'N/A'}, TP GTT Alert ID: ${result.tpOrderId || result.tpAlertId || 'N/A'}`);
+                }
             } else {
                 failed++;
-                failedOrders.push({ symbol: order.tradingSymbol, error: result.error });
-                console.error(`❌ Order ${failed} failed:`, result.error);
+                // For GTT orders, check if any alerts succeeded even if some failed
+                if (result.slOrderId || result.slAlertId || result.tpOrderId || result.tpAlertId) {
+                    console.warn(`⚠️ Partial success: Some GTT alerts placed`);
+                    success++; // Count as partial success
+                    failed--; // Don't count as completely failed
+                }
+                const errorMsg = result.error || result.message || 'Unknown error';
+                failedOrders.push({ symbol: order.tradingSymbol, error: errorMsg });
+                console.error(`❌ Order ${failed} failed:`, errorMsg);
+                if (result.details) {
+                    console.error('   Details:', result.details);
+                }
             }
             
             // Small delay between orders to avoid rate limiting
@@ -873,7 +1164,23 @@ function refreshOrders() {
 // Clear form
 function clearForm() {
     document.getElementById('strikePrice').value = '';
-    document.getElementById('quantity').value = '25';
+    const symbol = document.getElementById('symbol').value;
+    let defaultQty = 75;
+    let multiplier = 75;
+    if (symbol === 'NIFTY') {
+        multiplier = 75;
+    } else if (symbol === 'BANKNIFTY') {
+        multiplier = 35;
+    } else if (symbol === 'FINNIFTY') {
+        multiplier = 40;
+    }
+    defaultQty = multiplier;
+    
+    document.getElementById('quantity').value = '1';
+    const actualQtyInput = document.getElementById('actualQuantity');
+    if (actualQtyInput) {
+        actualQtyInput.value = defaultQty.toString();
+    }
     document.getElementById('price').value = '';
     document.getElementById('orderType').value = 'MARKET';
     togglePriceField();
@@ -984,7 +1291,7 @@ function populateExpiryDatesFallback() {
 
 // Initialize app
 document.addEventListener('DOMContentLoaded', function() {
-    console.log('🚀 Fast Trader UI loaded - checking authentication...');
+    console.log('🚀 FiFTO TRADER UI loaded - checking authentication...');
     
     // Check auth first, then populate expiry dates
     checkAuthStatus();
@@ -1005,14 +1312,20 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Update default quantity based on symbol
             const quantityInput = document.getElementById('quantity');
-            if (quantityInput) {
+            const actualQtyInput = document.getElementById('actualQuantity');
+            if (quantityInput && actualQtyInput) {
+                let multiplier = 75;
                 if (selectedSymbol === 'NIFTY') {
-                    quantityInput.value = 75; // NIFTY lot size
+                    quantityInput.value = 1; // Default 1 lot for NIFTY
+                    multiplier = 75;
                 } else if (selectedSymbol === 'BANKNIFTY') {
-                    quantityInput.value = 35; // BANKNIFTY lot size
+                    quantityInput.value = 1; // Default 1 lot for BANKNIFTY
+                    multiplier = 35;
                 } else if (selectedSymbol === 'FINNIFTY') {
-                    quantityInput.value = 40; // FINNIFTY lot size
+                    quantityInput.value = 1; // Default 1 lot for FINNIFTY
+                    multiplier = 40;
                 }
+                actualQtyInput.value = multiplier; // Set default quantity
             }
             
             refreshPrice();
@@ -1025,6 +1338,25 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Auto-refresh price every 1 minute (60 seconds)
     setInterval(refreshPrice, 60000);
+    
+    // Initialize option type and product buttons
+    selectOptionType('CE'); // Set CE as default
+    selectProduct('MIS'); // Set MIS as default
+    
+    // Initialize quantity display
+    updateQuantityFromLot();
+    
+    // Add mouse wheel event listener to lot size input for instant scroll increment/decrement
+    const quantityInput = document.getElementById('quantity');
+    if (quantityInput) {
+        quantityInput.addEventListener('wheel', handleLotScroll, { passive: false });
+    }
+    
+    // Add mouse wheel event listener to strike price input for instant scroll increment/decrement
+    const strikeInput = document.getElementById('strikePrice');
+    if (strikeInput) {
+        strikeInput.addEventListener('wheel', handleStrikeScroll, { passive: false });
+    }
     
     console.log('⏰ Auto-refresh enabled: Auth (30s), Price (60s)');
 });

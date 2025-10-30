@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Flattrade Fast Trader</title>
+    <title>Flattrade FiFTO TRADER</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <style>
@@ -263,7 +263,7 @@
     <!-- Topbar -->
     <div class="topbar d-flex justify-content-between align-items-center">
         <div class="d-flex align-items-center gap-3">
-            <div class="logo"><i class="fas fa-bolt"></i> FAST TRADER</div>
+            <div class="logo"><i class="fas fa-bolt"></i> FiFTO TRADER</div>
             <input type="text" placeholder="Search NIFTY, BANKNIFTY..." style="width:280px;">
                 </div>
         <div class="d-flex align-items-center gap-3">
@@ -400,21 +400,36 @@
                     <!-- Manual Strike -->
                     <div class="mb-3">
                         <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Strike Price</label>
-                        <input type="number" class="form-control-modern w-100" id="strikePrice" placeholder="24500" step="50">
+                        <input type="number" class="form-control-modern w-100" id="strikePrice" placeholder="24500" step="50" onwheel="handleStrikeScroll(event)">
+                        <small style="font-size:10px;color:#64748b;"><i class="fas fa-info-circle"></i> Use mouse scroll or arrow keys to adjust | Step: 50</small>
                         </div>
 
                     <!-- CE/PE & Qty -->
                         <div class="row mb-3">
                             <div class="col-6">
                             <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Type</label>
-                            <select class="form-select-modern w-100" id="optionType">
-                                        <option value="CE">Call (CE)</option>
-                                        <option value="PE">Put (PE)</option>
-                                    </select>
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-sm flex-fill option-type-btn" id="typeCE" onclick="selectOptionType('CE')" style="background:#22c55e;color:white;border:none;padding:8px;">
+                                    CE
+                                </button>
+                                <button type="button" class="btn btn-sm flex-fill option-type-btn" id="typePE" onclick="selectOptionType('PE')" style="background:#ef4444;color:white;border:none;padding:8px;">
+                                    PE
+                                </button>
+                            </div>
+                            <input type="hidden" id="optionType" value="CE">
                             </div>
                             <div class="col-6">
-                            <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Quantity (Lot)</label>
-                            <input type="number" class="form-control-modern w-100" id="quantity" value="75" step="1">
+                            <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Quantity</label>
+                            <div class="row g-2">
+                                <div class="col-6">
+                                    <input type="number" class="form-control-modern w-100" id="quantity" value="1" step="1" oninput="updateQuantityFromLot()" onwheel="handleLotScroll(event)" onkeydown="preventNegativeLot(event)" min="1" placeholder="Lot">
+                                    <small style="font-size:10px;color:#64748b;">Lot <i class="fas fa-mouse"></i> Scroll: ±1</small>
+                                </div>
+                                <div class="col-6">
+                                    <input type="number" class="form-control-modern w-100" id="actualQuantity" value="75" step="1" oninput="updateLotFromQuantity()" placeholder="Qty">
+                                    <small style="font-size:10px;color:#64748b;">Qty</small>
+                                </div>
+                            </div>
                             </div>
                         </div>
 
@@ -422,16 +437,22 @@
                         <div class="row mb-3">
                             <div class="col-6">
                             <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Product</label>
-                            <select class="form-select-modern w-100" id="product">
-                                <option value="MIS">MIS</option>
-                                <option value="NRML">NRML</option>
-                            </select>
+                            <div class="d-flex gap-2">
+                                <button type="button" class="btn btn-sm flex-fill product-type-btn" id="productMIS" onclick="selectProduct('MIS')" style="background:#3b82f6;color:white;border:none;padding:8px;">
+                                    MIS
+                                </button>
+                                <button type="button" class="btn btn-sm flex-fill product-type-btn" id="productNRML" onclick="selectProduct('NRML')" style="background:#6366f1;color:white;border:none;padding:8px;">
+                                    NRML
+                                </button>
+                            </div>
+                            <input type="hidden" id="product" value="MIS">
                             </div>
                             <div class="col-6">
                             <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Order Type</label>
                             <select class="form-select-modern w-100" id="orderType" onchange="togglePriceField()">
                                         <option value="MARKET">Market</option>
                                         <option value="LIMIT">Limit</option>
+                                        <option value="GTT_OCO">GTT (OCO)</option>
                                     </select>
                             </div>
                         </div>
@@ -441,6 +462,18 @@
                         <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Limit Price</label>
                         <input type="number" class="form-control-modern w-100" id="price" placeholder="0.00" step="0.05">
                         </div>
+
+                    <!-- GTT OCO Inputs -->
+                    <div class="row mb-3" id="gttSection" style="display:none;">
+                        <div class="col-6">
+                            <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Stop Loss Trigger</label>
+                            <input type="number" class="form-control-modern w-100" id="gttSL" placeholder="SL trigger price" step="0.05">
+                        </div>
+                        <div class="col-6">
+                            <label style="font-size:12px;color:#64748b;margin-bottom:6px;">Target Trigger</label>
+                            <input type="number" class="form-control-modern w-100" id="gttTP" placeholder="Target trigger price" step="0.05">
+                        </div>
+                    </div>
 
                     <!-- Actions -->
                     <div class="d-flex gap-2">

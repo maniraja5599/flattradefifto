@@ -267,6 +267,265 @@ app.get('/callback', async (req, res) => {
     }
 });
 
+// Place GTT OCO (stop-loss and target) linked to a position
+app.post('/api/place-gtt-oco', async (req, res) => {
+    try {
+        const { order } = req.body;
+        const sessionId = ensureSessionCookie(req, res);
+        if (!sessionId || !userSessions.has(sessionId)) {
+            return res.json({ success: false, error: 'Not authenticated. Please login first.' });
+        }
+        const session = userSessions.get(sessionId);
+        if (!session.isAuthenticated) {
+            return res.json({ success: false, error: 'Authentication incomplete. Please complete OAuth flow.' });
+        }
+
+        // Validate inputs
+        const sl = order?.gtt?.slTrigger || null;
+        const tp = order?.gtt?.tpTrigger || null;
+        if (!sl && !tp) {
+            return res.json({ success: false, error: 'At least one trigger (SL or TP) is required for GTT OCO.' });
+        }
+
+        console.log('📤 [GTT_OCO] Placing order with GTT:', {
+            user: session.userId,
+            orderSummary: {
+                symbol: order.symbol,
+                tradingSymbol: order.tradingSymbol,
+                qty: order.quantity,
+                side: order.trantype,
+                slTrigger: sl,
+                tpTrigger: tp
+            }
+        });
+
+        // Get trading symbol
+        let tradingSymbol = order.tradingSymbol;
+        if (!tradingSymbol) {
+            // Generate trading symbol
+            const expirySelect = order.expiry || new Date().toISOString().split('T')[0];
+            const expiryDate = new Date(expirySelect + 'T00:00:00');
+            const day = expiryDate.getDate().toString().padStart(2, '0');
+            const month = expiryDate.toLocaleDateString('en-GB', { month: 'short' }).toUpperCase();
+            const year = expiryDate.getFullYear().toString().slice(-2);
+            const optionTypeCode = order.optionType ? order.optionType.charAt(0) : 'C';
+            tradingSymbol = `${order.symbol}${day}${month}${year}${optionTypeCode}${order.strikePrice}`;
+        }
+
+        // Validate symbol by searching - CRITICAL: Must use exact format from FlatTrade
+        try {
+            console.log(`🔍 Validating trading symbol: ${tradingSymbol}`);
+            const searchData = { uid: session.userId, stext: tradingSymbol };
+            const searchResponse = await axios.post(`${FLATTRADE_BASE_URL}/SearchScrip`, 
+                `jData=${JSON.stringify(searchData)}&jKey=${session.jKey}`,
+                { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+            );
+            
+            if (searchResponse.data.stat === 'Ok' && searchResponse.data.values?.length > 0) {
+                // Try exact match first
+                let exactMatch = searchResponse.data.values.find(item => 
+                    item.exch === 'NFO' && item.tsym?.toUpperCase() === tradingSymbol.toUpperCase()
+                );
+                
+                // If no exact match, try to find by strike price and option type
+                if (!exactMatch && order.strikePrice) {
+                    const strikeStr = order.strikePrice.toString();
+                    const optionTypeCode = order.optionType ? order.optionType.charAt(0) : 'C';
+                    exactMatch = searchResponse.data.values.find(item => 
+                        item.exch === 'NFO' && 
+                        item.tsym?.includes(strikeStr) &&
+                        item.tsym?.includes(optionTypeCode)
+                    );
+                }
+                
+                if (exactMatch) {
+                    tradingSymbol = exactMatch.tsym; // Use exact format from FlatTrade
+                    console.log(`✅ Symbol validated: ${tradingSymbol} (Token: ${exactMatch.token})`);
+                } else {
+                    console.warn(`⚠️ No exact match found for ${tradingSymbol}`);
+                    console.log(`📋 Available symbols:`, searchResponse.data.values.slice(0, 5).map(v => `${v.tsym} (${v.exch})`));
+                }
+            } else {
+                console.warn(`⚠️ Symbol search returned no results for: ${tradingSymbol}`);
+            }
+        } catch (searchError) {
+            console.error('❌ Symbol validation error:', searchError.response?.data || searchError.message);
+        }
+
+        const results = {
+            mainOrder: null, // Not placing main order - only GTT alerts
+            slOrder: null,
+            tpOrder: null
+        };
+
+        // Place only GTT orders (alerts) - no main order
+        console.log('📤 Placing GTT orders only (no main order)');
+
+        // Step 1: Place SL GTT Alert if provided
+        if (sl) {
+            try {
+                // Determine opposite side for SL: if BUY, SL is SELL; if SELL, SL is BUY
+                const slTrantype = order.trantype === 'B' ? 'S' : 'B';
+                const slAlertData = {
+                    uid: session.userId,
+                    actid: session.userId,
+                    exch: 'NFO',
+                    tsym: tradingSymbol,
+                    ai_t: 'LTP_BOS', // Alert Type - Last Traded Price Below (triggers when LTP < trigger)
+                    validity: 'GTT', // 1-year GTT validity
+                    d: sl.toString(), // Data to be compared with LTP (trigger price - when LTP goes below this)
+                    prc: sl.toString(), // Limit price for the order to be placed
+                    qty: order.quantity.toString(),
+                    prd: order.product === 'MIS' ? 'I' : (order.product === 'NRML' ? 'M' : 'I'),
+                    trantype: slTrantype, // Opposite side to exit position
+                    prctyp: 'LMT', // Limit order type
+                    ret: 'DAY', // Retention type
+                    dscqty: '0', // Disclosed quantity (required)
+                    remarks: 'SL GTT', // Remarks (required)
+                    ordersource: 'API'
+                };
+
+                console.log('📤 Setting SL GTT Alert:', JSON.stringify(slAlertData, null, 2));
+                const slResponse = await axios.post(`${FLATTRADE_BASE_URL}/PlaceGTTOrder`, 
+                    `jData=${JSON.stringify(slAlertData)}&jKey=${session.jKey}`,
+                    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+                );
+
+                console.log('📥 SL GTT Alert Response:', JSON.stringify(slResponse.data, null, 2));
+
+                // PlaceGTTOrder returns an array with response object
+                const slRespData = Array.isArray(slResponse.data) ? slResponse.data[0] : slResponse.data;
+                
+                if (slRespData && (slRespData.stat === 'Ok' || slRespData.stat === 'Oi created')) {
+                    const alertId = slRespData.Al_id || slRespData.al_id; // Alert ID (capital A in response)
+                    results.slOrder = {
+                        orderId: alertId,
+                        success: true
+                    };
+                    console.log(`✅ SL GTT Alert set: ${alertId}`);
+                } else {
+                    const errorMsg = slRespData?.emsg || slRespData?.error || slRespData?.stat || JSON.stringify(slResponse.data);
+                    console.error(`❌ SL GTT Alert failed:`, errorMsg);
+                    console.error(`Full response:`, JSON.stringify(slResponse.data, null, 2));
+                    console.error(`Response stat:`, slRespData?.stat);
+                    console.error(`Response emsg:`, slRespData?.emsg);
+                    results.slOrder = {
+                        success: false,
+                        error: `SL GTT: ${errorMsg || 'SL GTT Alert failed'}`
+                    };
+                }
+            } catch (slError) {
+                const errorData = slError.response?.data;
+                const errorMsg = errorData?.emsg || (Array.isArray(errorData) ? errorData[0]?.emsg : null) || slError.message;
+                console.error('❌ SL GTT Alert error:', errorMsg);
+                console.error('Full error response:', JSON.stringify(errorData || slError.message, null, 2));
+                results.slOrder = {
+                    success: false,
+                    error: errorMsg || 'SL GTT Alert failed'
+                };
+            }
+        }
+
+        // Step 2: Place TP GTT Alert if provided
+        if (tp) {
+            try {
+                // TP is opposite side to exit position
+                const tpTrantype = order.trantype === 'B' ? 'S' : 'B';
+                const tpAlertData = {
+                    uid: session.userId,
+                    actid: session.userId,
+                    exch: 'NFO',
+                    tsym: tradingSymbol,
+                    ai_t: 'LTP_AOS', // Alert Type - Last Traded Price Above (triggers when LTP > trigger)
+                    validity: 'GTT', // 1-year GTT validity
+                    d: tp.toString(), // Data to be compared with LTP (trigger price - when LTP goes above this)
+                    prc: tp.toString(), // Limit price for the order to be placed
+                    qty: order.quantity.toString(),
+                    prd: order.product === 'MIS' ? 'I' : (order.product === 'NRML' ? 'M' : 'I'),
+                    trantype: tpTrantype, // Opposite side to exit position
+                    prctyp: 'LMT', // Limit order type
+                    ret: 'DAY', // Retention type
+                    dscqty: '0', // Disclosed quantity (required)
+                    remarks: 'TP GTT', // Remarks (required)
+                    ordersource: 'API'
+                };
+
+                console.log('📤 Setting TP GTT Alert:', JSON.stringify(tpAlertData, null, 2));
+                const tpResponse = await axios.post(`${FLATTRADE_BASE_URL}/PlaceGTTOrder`, 
+                    `jData=${JSON.stringify(tpAlertData)}&jKey=${session.jKey}`,
+                    { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+                );
+
+                console.log('📥 TP GTT Alert Response:', JSON.stringify(tpResponse.data, null, 2));
+
+                // PlaceGTTOrder returns an array with response object
+                const tpRespData = Array.isArray(tpResponse.data) ? tpResponse.data[0] : tpResponse.data;
+                
+                if (tpRespData && (tpRespData.stat === 'Ok' || tpRespData.stat === 'Oi created')) {
+                    const alertId = tpRespData.Al_id || tpRespData.al_id; // Alert ID (capital A in response)
+                    results.tpOrder = {
+                        orderId: alertId,
+                        success: true
+                    };
+                    console.log(`✅ TP GTT Alert set: ${alertId}`);
+                } else {
+                    const errorMsg = tpRespData?.emsg || tpRespData?.error || tpRespData?.stat || JSON.stringify(tpResponse.data);
+                    console.error(`❌ TP GTT Alert failed:`, errorMsg);
+                    console.error(`Full response:`, JSON.stringify(tpResponse.data, null, 2));
+                    console.error(`Response stat:`, tpRespData?.stat);
+                    console.error(`Response emsg:`, tpRespData?.emsg);
+                    results.tpOrder = {
+                        success: false,
+                        error: `TP GTT: ${errorMsg || 'TP GTT Alert failed'}`
+                    };
+                }
+            } catch (tpError) {
+                const errorData = tpError.response?.data;
+                const errorMsg = errorData?.emsg || (Array.isArray(errorData) ? errorData[0]?.emsg : null) || tpError.message;
+                console.error('❌ TP GTT Alert error:', errorMsg);
+                console.error('Full error response:', JSON.stringify(errorData || tpError.message, null, 2));
+                results.tpOrder = {
+                    success: false,
+                    error: errorMsg || 'TP GTT Alert failed'
+                };
+            }
+        }
+
+        // Return results - only GTT orders, no main order
+        const allSuccess = (!sl || results.slOrder?.success) && (!tp || results.tpOrder?.success);
+
+        const responseData = {
+            success: allSuccess,
+            message: allSuccess ? 'GTT alerts placed successfully' : 
+                     'Some GTT alerts failed',
+            slAlertId: results.slOrder?.orderId || null, // Alert ID for SL GTT
+            tpAlertId: results.tpOrder?.orderId || null, // Alert ID for TP GTT
+            // Keep old field names for backward compatibility
+            slOrderId: results.slOrder?.orderId || null,
+            tpOrderId: results.tpOrder?.orderId || null,
+            details: results
+        };
+
+        // Add error messages if any failed
+        if (!allSuccess) {
+            const errors = [];
+            if (sl && !results.slOrder?.success) {
+                errors.push(`SL GTT: ${results.slOrder?.error || 'Failed'}`);
+            }
+            if (tp && !results.tpOrder?.success) {
+                errors.push(`TP GTT: ${results.tpOrder?.error || 'Failed'}`);
+            }
+            responseData.error = errors.join('; ');
+        }
+
+        res.json(responseData);
+
+    } catch (error) {
+        console.error('❌ GTT_OCO error:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
 // Test endpoint to verify API is working
 app.get('/api/test', (req, res) => {
     res.json({ success: true, message: 'API is working', timestamp: new Date().toISOString() });
@@ -2291,21 +2550,53 @@ app.get('/api/trade-book', async (req, res) => {
             }
         );
 
-        console.log('✅ Trade book response:', response.data);
+        console.log('✅ Trade book response type:', Array.isArray(response.data) ? 'Array' : typeof response.data);
+        console.log('✅ Trade book response:', JSON.stringify(response.data, null, 2));
         
-        if (response.data.stat === 'Ok') {
-            res.json({
-                status: 'success',
-                data: response.data.values || [],
-                message: 'Trade book fetched successfully'
-            });
+        // According to FlatTrade docs, TradeBook returns a JSON array directly
+        // Each item in the array has stat: "Ok" and trade details
+        let trades = [];
+        
+        if (Array.isArray(response.data)) {
+            // Direct array response
+            trades = response.data;
+            console.log(`✅ Found ${trades.length} trades in array response`);
+        } else if (response.data.stat === 'Ok') {
+            // Object with stat: "Ok" and values array
+            if (response.data.values && Array.isArray(response.data.values)) {
+                trades = response.data.values;
+                console.log(`✅ Found ${trades.length} trades in values property`);
+            } else if (response.data.tsym || response.data.qty !== undefined) {
+                // Single trade object
+                trades = [response.data];
+                console.log(`✅ Found single trade`);
+            } else {
+                console.log(`⚠️ API returned Ok but no trades found`);
+            }
         } else {
-            res.json({
-                status: 'error',
-                message: response.data.emsg || 'Failed to fetch trade book',
-                data: []
-            });
+            // Error response
+            const errorMsg = response.data.emsg || response.data.message || 'Failed to fetch trade book';
+            console.error(`❌ TradeBook API error: ${errorMsg}`);
+            
+            // Check if it's actually an array being returned as error
+            if (Array.isArray(response.data) && response.data.length > 0) {
+                trades = response.data;
+                console.log(`⚠️ Treating array response as trades (${trades.length} items)`);
+            } else {
+                return res.json({ 
+                    status: 'success',
+                    data: [],
+                    message: 'No trades found'
+                });
+            }
         }
+        
+        res.json({ 
+            status: 'success',
+            data: trades,
+            message: 'Trade book fetched successfully'
+        });
+        
     } catch (error) {
         console.error('❌ Error getting trade book:', error);
         res.status(500).json({ 
