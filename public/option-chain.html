@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Option Chain - Flattrade</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="styles.css" rel="stylesheet">
+    <style>
+        * { margin:0; padding:0; box-sizing:border-box; }
+        body {
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            overflow-x: hidden;
+        }
+        
+        .container-fluid {
+            padding: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
+        }
+        
+        .card-modern {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .card-header-modern {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border-color);
+        }
+        
+        .card-header-modern h6 {
+            color: var(--text-primary);
+            font-weight: 600;
+            margin: 0;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border-radius: 6px;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+        }
+        
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #059669;
+        }
+        
+        .btn-danger {
+            background: #ef4444;
+            color: white;
+        }
+        
+        .btn-danger:hover {
+            background: #dc2626;
+        }
+        
+        .btn-outline-light {
+            background: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+        
+        .btn-outline-light:hover {
+            background: var(--bg-tertiary);
+            border-color: var(--accent-primary);
+            color: var(--accent-primary);
+        }
+        
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 13px;
+        }
+        
+        .option-chain-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            margin-top: 10px;
+        }
+        
+        .option-chain-table th {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            font-weight: 600;
+            padding: 10px 8px;
+            text-align: center;
+            border: 1px solid var(--border-color);
+            font-size: 11px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        
+        .option-chain-table td {
+            padding: 8px;
+            border: 1px solid var(--border-color);
+            text-align: center;
+            color: var(--text-primary);
+        }
+        
+        .option-chain-table tbody tr:hover {
+            background: rgba(99, 102, 241, 0.05);
+        }
+        
+        .strike-price {
+            font-weight: 700;
+            color: var(--text-primary);
+            background: var(--bg-secondary);
+        }
+        
+        .ce-price, .pe-price {
+            font-weight: 600;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        
+        .ce-price:hover, .pe-price:hover {
+            background: rgba(99, 102, 241, 0.1);
+        }
+        
+        .price-positive {
+            color: #10b981;
+        }
+        
+        .price-negative {
+            color: #ef4444;
+        }
+        
+        .btn-buy-small {
+            background: #10b981;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        
+        .btn-buy-small:hover {
+            background: #059669;
+        }
+        
+        .btn-sell-small {
+            background: #ef4444;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        
+        .btn-sell-small:hover {
+            background: #dc2626;
+        }
+        
+        .controls-row {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        
+        .controls-row select, .controls-row input {
+            padding: 6px 12px;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+        
+        .spot-price {
+            font-size: 18px;
+            font-weight: 700;
+            color: #10b981;
+            margin-left: 12px;
+        }
+        
+        .basket-badge {
+            background: #10b981;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+    </style>
+</head>
+<body>
+    <!-- Topbar -->
+    <div id="topbar" style="background:var(--bg-secondary); border-bottom:1px solid var(--border-color); padding:12px 20px;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="display:flex; align-items:center; gap:16px;">
+                <a href="index.html" style="text-decoration:none; color:var(--text-primary);">
+                    <i class="fas fa-arrow-left" style="margin-right:8px;"></i>
+                    <span style="font-weight:600;">Back to Orders</span>
+                </a>
+                <h4 style="color:#10b981; margin:0; font-weight:700;">
+                    <i class="fas fa-chart-line me-2"></i> Option Chain
+                    <span class="basket-badge" id="basketCountBadge">0</span>
+                </h4>
+            </div>
+            <div style="display:flex; align-items:center; gap:12px;">
+                <button class="btn btn-sm btn-outline-light" onclick="toggleTheme()" id="themeToggleBtn" style="background:transparent; border:1px solid var(--border-color); color:var(--text-primary); padding:6px 12px; min-width:40px;">
+                    <i class="fas fa-moon" id="themeIcon"></i>
+                </button>
+                <button class="btn btn-sm btn-success" onclick="viewBasket()" id="viewBasketBtn">
+                    <i class="fas fa-shopping-basket"></i> View Basket (<span id="basketCountHeader">0</span>)
+                </button>
+                <button class="btn btn-sm btn-outline-light" onclick="refreshOptionChain()">
+                    <i class="fas fa-sync"></i> Refresh
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="container-fluid">
+        <!-- Alert Container -->
+        <div id="alertContainer" style="position:fixed; top:70px; right:20px; z-index:9999; min-width:300px;"></div>
+        
+        <!-- Option Chain Card -->
+        <div class="card-modern">
+            <div class="card-header-modern">
+                <h6><i class="fas fa-chart-line me-2"></i> Option Chain - <span id="optionChainSymbol">NIFTY</span></h6>
+                <div style="display:flex; align-items:center;">
+                    <span style="font-size:12px; color:var(--text-muted); margin-right:8px;">Spot:</span>
+                    <span class="spot-price" id="spotPrice">₹0</span>
+                </div>
+            </div>
+            
+            <!-- Controls -->
+            <div class="controls-row">
+                <div>
+                    <label style="font-size:11px; color:var(--text-muted); margin-bottom:4px; display:block;">Symbol:</label>
+                    <select id="symbolSelect" onchange="changeSymbol()">
+                        <option value="NIFTY">NIFTY</option>
+                        <option value="BANKNIFTY">BANKNIFTY</option>
+                        <option value="FINNIFTY">FINNIFTY</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:11px; color:var(--text-muted); margin-bottom:4px; display:block;">Expiry:</label>
+                    <select id="expirySelect" onchange="changeExpiry()">
+                        <option value="">Loading...</option>
+                    </select>
+                </div>
+                <div>
+                    <label style="font-size:11px; color:var(--text-muted); margin-bottom:4px; display:block;">Strikes:</label>
+                    <input type="number" id="strikeCount" value="10" min="5" max="20" style="width:80px;" onchange="changeStrikeCount()">
+                </div>
+            </div>
+            
+            <div id="optionChainContainer" style="overflow-x:auto; max-height:600px;">
+                <table class="option-chain-table" id="optionChainTable">
+                    <thead>
+                        <tr>
+                            <th style="min-width:80px;">Strike</th>
+                            <th style="min-width:100px;">CE LTP</th>
+                            <th style="min-width:100px;">CE OI</th>
+                            <th style="min-width:100px;">CE Volume</th>
+                            <th style="min-width:80px;">Action</th>
+                            <th style="min-width:80px;">Action</th>
+                            <th style="min-width:100px;">PE Volume</th>
+                            <th style="min-width:100px;">PE OI</th>
+                            <th style="min-width:100px;">PE LTP</th>
+                        </tr>
+                    </thead>
+                    <tbody id="optionChainTableBody">
+                        <tr>
+                            <td colspan="9" style="text-align:center; padding:40px;">
+                                <div style="color:#64748b;">
+                                    <i class="fas fa-spinner fa-spin"></i> Loading option chain...
+                                </div>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Order Modal -->
+    <div id="orderModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.7); z-index:10000; align-items:center; justify-content:center;">
+        <div style="background:var(--bg-card); border:1px solid var(--border-color); border-radius:12px; padding:24px; min-width:400px; max-width:500px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+                <h6 style="color:var(--text-primary); margin:0;">Place Order</h6>
+                <button onclick="closeOrderModal()" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:20px;">&times;</button>
+            </div>
+            <div id="orderModalContent">
+                <!-- Order form will be inserted here -->
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="option-chain.js"></script>
+</body>
+</html>
+
