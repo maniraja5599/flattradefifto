@@ -3,6 +3,12 @@ let basketOrders = [];
 let currentPrice = 24500;
 let isAuthenticated = false;
 let currentUser = null;
+let marginData = {
+    total: 0,
+    available: 0,
+    used: 0,
+    mcx: 0
+};
 
 // Show alerts
 function showAlert(message, type = 'info') {
@@ -31,17 +37,24 @@ function showAlert(message, type = 'info') {
 // Quick login function (no session persistence)
 async function quickLogin() {
     try {
+        console.log('🚀 Starting login process...');
         showAlert('Opening login window...', 'info');
         
         // Generate OAuth URL and open window
         const response = await fetch('/api/generate-manual-auth-url', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include'
         });
         
-        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
         
-        if (result.success) {
+        const result = await response.json();
+        console.log('📡 Login API response:', result);
+        
+        if (result.success && result.authUrl) {
             // Open OAuth window
             const authWindow = window.open(result.authUrl, 'FlattradeAuth', 'width=600,height=700');
             
@@ -56,16 +69,36 @@ async function quickLogin() {
                 if (authWindow.closed) {
                     clearInterval(checkInterval);
                     showAlert('Verifying authentication...', 'info');
-                    setTimeout(checkAuthStatus, 2000);
+                    // Check auth status multiple times to ensure it works
+                    setTimeout(() => {
+                        checkAuthStatus();
+                        setTimeout(checkAuthStatus, 2000);
+                        setTimeout(checkAuthStatus, 5000);
+                    }, 1000);
                 }
             }, 1000);
             
+            // Also check auth status periodically even if window is open
+            const authCheckInterval = setInterval(() => {
+                if (authWindow.closed) {
+                    clearInterval(authCheckInterval);
+                } else {
+                    checkAuthStatus().then(() => {
+                        if (isAuthenticated) {
+                            authWindow.close();
+                            clearInterval(authCheckInterval);
+                            if (checkInterval) clearInterval(checkInterval);
+                        }
+                    });
+                }
+            }, 3000);
+            
         } else {
-            throw new Error(result.error || 'Failed to generate login URL');
+            throw new Error(result.error || result.emsg || 'Failed to generate login URL');
         }
         
     } catch (error) {
-        console.error('Login error:', error);
+        console.error('❌ Login error:', error);
         showAlert('Login failed: ' + error.message, 'danger');
     }
 }
@@ -73,31 +106,113 @@ async function quickLogin() {
 // Logout function
 async function logout() {
     try {
+        if (!confirm('Are you sure you want to logout?')) {
+            return;
+        }
+        
         const response = await fetch('/api/logout', {
             method: 'POST',
             credentials: 'include'
         });
         
         const result = await response.json();
+        console.log('📡 Logout response:', result);
         
-        if (result.stat === 'Ok' || result.success) {
-            showAlert('Logged out successfully. Reloading...', 'success');
+        // Check if logout was successful (handle various response formats)
+        const logoutSuccess = result.stat === 'Ok' || 
+                            result.success === true ||
+                            result.status === 'success' ||
+                            result.status === 'ok' ||
+                            result.message?.toLowerCase().includes('logout') ||
+                            result.message?.toLowerCase().includes('success') ||
+                            response.status === 200;
+        
+        if (logoutSuccess) {
+            isAuthenticated = false;
+            currentUser = null;
+            console.log('✅ Logout successful');
+            
+            // Clear basket
+            basketOrders = [];
+            updateBasketDisplay();
+            
+            // Update UI
+            const userStatusEl = document.getElementById('userStatus');
+            const userStatusBtn = document.getElementById('userStatusBtn');
+            const authAlert = document.getElementById('authAlert');
+            
+            if (userStatusEl) {
+                userStatusEl.textContent = 'Not Logged In';
+            }
+            
+            // Hide profile dropdown
+            const profileDropdown = document.getElementById('profileDropdown');
+            if (profileDropdown) {
+                profileDropdown.style.display = 'none';
+            }
+            
+            // Hide margin balance display
+            const marginBalanceDisplay = document.getElementById('marginBalanceDisplay');
+            if (marginBalanceDisplay) {
+                marginBalanceDisplay.style.display = 'none';
+            }
+            
+            // Show auth alert
+            if (authAlert) {
+                authAlert.style.display = 'flex';
+                authAlert.classList.add('d-flex');
+            }
+            
+            // Show warning alert
+            showAlert('⚠️ You have been logged out. Refreshing page...', 'warning');
+            
+            // Clear today's orders display
+            const todaysOrdersContainer = document.getElementById('todaysOrders');
+            if (todaysOrdersContainer) {
+                todaysOrdersContainer.innerHTML = `
+                    <div class="empty-state" style="padding:40px 20px;">
+                        <i class="fas fa-clipboard-list"></i>
+                        <div style="font-size:14px; color:#64748b;">No orders today</div>
+                    </div>
+                `;
+            }
+            
+            // Hide chevron when logged out
+            const profileChevron = document.getElementById('profileChevron');
+            if (profileChevron) {
+                profileChevron.style.display = 'none';
+            }
+            
+            // Refresh page after logout - use shorter delay and force reload
+            setTimeout(() => {
+                console.log('🔄 Refreshing page after logout...');
+                // Use location.href for more reliable refresh
+                window.location.href = window.location.href;
+            }, 800);
+            
+        } else {
+            // Even if response format is unexpected, proceed with logout if we got here
+            console.warn('⚠️ Unexpected logout response format, proceeding with logout anyway');
             isAuthenticated = false;
             currentUser = null;
             
-            // Hide dropdown
-            document.getElementById('userDropdown').style.display = 'none';
-            
-            // Reload page after a short delay
+            // Still refresh the page
             setTimeout(() => {
-                window.location.reload();
-            }, 1000);
-        } else {
-            throw new Error(result.message || 'Logout failed');
+                console.log('🔄 Refreshing page after logout...');
+                window.location.href = window.location.href;
+            }, 800);
         }
     } catch (error) {
-        console.error('Logout error:', error);
-        showAlert('Logout failed: ' + error.message, 'danger');
+        console.error('❌ Logout error:', error);
+        // Even on error, try to logout locally and refresh
+        isAuthenticated = false;
+        currentUser = null;
+        showAlert('Logging out and refreshing...', 'warning');
+        
+        setTimeout(() => {
+            console.log('🔄 Refreshing page after logout error...');
+            window.location.href = window.location.href;
+        }, 800);
     }
 }
 
@@ -130,6 +245,12 @@ async function checkAuthStatus() {
         const authAlert = document.getElementById('authAlert');
         console.log('🔔 Auth alert element:', authAlert ? 'Found' : 'NOT FOUND');
         
+        // Update user status in simplified UI
+        const userStatusEl = document.getElementById('userStatus');
+        
+        // Get profile chevron once to avoid duplicate declarations
+        const profileChevron = document.getElementById('profileChevron');
+        
         if (data.authenticated) {
             isAuthenticated = true;
             console.log('✅ User IS authenticated:', data.userId);
@@ -139,43 +260,33 @@ async function checkAuthStatus() {
                 authAlert.style.setProperty('display', 'none', 'important');
                 authAlert.classList.remove('d-flex');
                 console.log('✅ Auth alert hidden successfully');
-            } else {
-                console.warn('⚠️ Cannot hide auth alert - element not found');
+            }
+            
+            // Update user status display with user ID initially
+            if (userStatusEl) {
+                userStatusEl.textContent = data.userId || 'Logged In';
+            }
+            
+            // Show chevron when authenticated
+            if (profileChevron) {
+                profileChevron.style.display = 'inline-block';
+            }
+            
+            // Update profile dropdown with user name
+            const profileUserName = document.getElementById('profileUserName');
+            if (profileUserName) {
+                profileUserName.textContent = data.userId || 'User';
             }
             
             // Store current user
             currentUser = data;
             
-            // Update login button to show user with dropdown
-            const userMenuBtn = document.getElementById('userMenuBtn');
-            if (userMenuBtn) {
-                userMenuBtn.innerHTML = `<i class="fas fa-user-circle"></i> ${data.userId}`;
-                userMenuBtn.classList.remove('btn-outline-light');
-                userMenuBtn.classList.add('btn-success');
-                userMenuBtn.setAttribute('onclick', 'toggleUserDropdown()');
-            }
-            
-            // Update old buttons (for compatibility)
-            const loginBtns = document.querySelectorAll('button[onclick="quickLogin()"]');
-            console.log('🔘 Found', loginBtns.length, 'login buttons');
-            loginBtns.forEach(btn => {
-                if (btn.id !== 'userMenuBtn') {
-                    btn.innerHTML = `<i class="fas fa-user-circle"></i> ${data.userId}`;
-                    btn.classList.remove('btn-outline-light');
-                    btn.classList.add('btn-success');
-                }
-            });
-            
-            // Update dropdown user info
-            const dropdownUserId = document.getElementById('dropdownUserId');
-            if (dropdownUserId) {
-                dropdownUserId.textContent = data.userId;
-            }
-            
-            // Load user data (will update name)
-            console.log('📊 Loading user data and prices...');
+            // Load user info to get name and margin balance
+            loadUserInfoForName();
             loadUserInfo();
-            refreshPrice();
+            
+            // Load today's orders if authenticated
+            loadTodaysOrders();
             
         } else {
             isAuthenticated = false;
@@ -189,34 +300,66 @@ async function checkAuthStatus() {
                 console.log('⚠️ Auth alert shown');
             }
             
-            // Reset user menu button
-            const userMenuBtn = document.getElementById('userMenuBtn');
-            if (userMenuBtn) {
-                userMenuBtn.innerHTML = `<i class="fas fa-sign-in-alt"></i> Login`;
-                userMenuBtn.classList.remove('btn-success');
-                userMenuBtn.classList.add('btn-outline-light');
-                userMenuBtn.setAttribute('onclick', 'quickLogin()');
+            // Update user status display
+            if (userStatusEl) {
+                userStatusEl.textContent = 'Not Logged In';
             }
             
-            // Hide dropdown
-            const dropdown = document.getElementById('userDropdown');
-            if (dropdown) {
-                dropdown.style.display = 'none';
+            // Hide profile dropdown
+            const profileDropdown = document.getElementById('profileDropdown');
+            if (profileDropdown) {
+                profileDropdown.style.display = 'none';
             }
             
-            // Reset other login buttons
-            const loginBtns = document.querySelectorAll('button[onclick="quickLogin()"]');
-            loginBtns.forEach(btn => {
-                if (btn.id !== 'userMenuBtn') {
-                    btn.innerHTML = `<i class="fas fa-sign-in-alt"></i> Login`;
-                    btn.classList.remove('btn-success');
-                    btn.classList.add('btn-outline-light');
-                }
-            });
+            // Hide chevron when not authenticated
+            if (profileChevron) {
+                profileChevron.style.display = 'none';
+            }
+            
+            // Hide margin balance display
+            const marginBalanceDisplay = document.getElementById('marginBalanceDisplay');
+            if (marginBalanceDisplay) {
+                marginBalanceDisplay.style.display = 'none';
+            }
         }
     } catch (error) {
         console.error('❌ Auth check error:', error);
         isAuthenticated = false;
+        
+        // Hide margin balance display on error
+        const marginBalanceDisplay = document.getElementById('marginBalanceDisplay');
+        if (marginBalanceDisplay) {
+            marginBalanceDisplay.style.display = 'none';
+        }
+    }
+}
+
+// Load user name for display
+async function loadUserInfoForName() {
+    try {
+        // Get user details
+        const userResponse = await fetch('/api/user-details', { credentials: 'include' });
+        const userData = await userResponse.json();
+        
+        if (userData.stat === 'Ok') {
+            const userName = userData.uname || userData.actid || userData.userId || 'User';
+            
+            // Update user status display with name
+            const userStatusEl = document.getElementById('userStatus');
+            if (userStatusEl) {
+                userStatusEl.textContent = userName;
+            }
+            
+            // Update profile dropdown with user name
+            const profileUserName = document.getElementById('profileUserName');
+            if (profileUserName) {
+                profileUserName.textContent = userName;
+            }
+            
+            console.log('✅ User name loaded:', userName);
+        }
+    } catch (error) {
+        console.error('❌ Error loading user name:', error);
     }
 }
 
@@ -225,11 +368,36 @@ async function loadUserInfo() {
     try {
         // Get margin info
         const marginResponse = await fetch('/api/limits', { credentials: 'include' });
-        const marginData = await marginResponse.json();
+        const marginResponseData = await marginResponse.json();
         
-        if (marginData.stat === 'Ok') {
-            const cash = parseFloat(marginData.cash || 0);
-            const used = parseFloat(marginData.marginused || 0);
+        if (marginResponseData.stat === 'Ok') {
+            const cash = parseFloat(marginResponseData.cash || 0);
+            const used = parseFloat(marginResponseData.marginused || 0);
+            const total = cash + used; // Calculate total margin
+            
+            // Extract MCX margin (try different possible field names)
+            // Log available fields for debugging
+            if (Object.keys(marginResponseData).some(key => key.toLowerCase().includes('mcx') || key.toLowerCase().includes('commodity'))) {
+                console.log('📊 Margin data fields:', Object.keys(marginResponseData));
+            }
+            
+            const mcxMargin = parseFloat(
+                marginResponseData.mcx || 
+                marginResponseData.mcx_margin || 
+                marginResponseData.mcxmargin ||
+                marginResponseData.commodity || 
+                marginResponseData.commodity_margin ||
+                marginResponseData.commoditymargin ||
+                0
+            );
+            
+            // Store margin data globally
+            marginData = {
+                total: total,
+                available: cash,
+                used: used,
+                mcx: mcxMargin
+            };
             
             // Update all displays
             if (document.getElementById('topFunds')) {
@@ -241,6 +409,37 @@ async function loadUserInfo() {
             if (document.getElementById('usedMargin')) {
                 document.getElementById('usedMargin').textContent = `₹${used.toLocaleString('en-IN')}`;
             }
+            
+            // Update margin details dropdown
+            if (document.getElementById('totalMargin')) {
+                document.getElementById('totalMargin').textContent = `₹${total.toLocaleString('en-IN')}`;
+            }
+            if (document.getElementById('availableMarginDetail')) {
+                document.getElementById('availableMarginDetail').textContent = `₹${cash.toLocaleString('en-IN')}`;
+            }
+            if (document.getElementById('usedMarginDetail')) {
+                document.getElementById('usedMarginDetail').textContent = `₹${used.toLocaleString('en-IN')}`;
+            }
+            if (document.getElementById('mcxMarginDetail')) {
+                document.getElementById('mcxMarginDetail').textContent = `₹${mcxMargin.toLocaleString('en-IN')}`;
+                // Show/hide MCX section based on whether MCX margin exists
+                const mcxSection = document.getElementById('mcxMarginSection');
+                if (mcxSection) {
+                    mcxSection.style.display = mcxMargin > 0 ? 'block' : 'none';
+                }
+            }
+            
+            // Show margin balance display
+            const marginBalanceDisplay = document.getElementById('marginBalanceDisplay');
+            if (marginBalanceDisplay) {
+                marginBalanceDisplay.style.display = 'flex';
+            }
+        } else {
+            // Hide margin balance display if margin data is not available
+            const marginBalanceDisplay = document.getElementById('marginBalanceDisplay');
+            if (marginBalanceDisplay) {
+                marginBalanceDisplay.style.display = 'none';
+            }
         }
         
         // Get user details
@@ -248,22 +447,30 @@ async function loadUserInfo() {
         const userData = await userResponse.json();
         
         if (userData.stat === 'Ok') {
+            const userName = userData.uname || userData.actid || 'User';
+            
+            // Update user status display with name
+            const userStatusEl = document.getElementById('userStatus');
+            if (userStatusEl) {
+                userStatusEl.textContent = userName;
+            }
+            
             const userInfoEl = document.getElementById('userInfo');
             if (userInfoEl) {
-                userInfoEl.textContent = userData.uname || userData.actid || 'User';
+                userInfoEl.textContent = userName;
             }
             
             // Update dropdown with full name
             const dropdownUserName = document.getElementById('dropdownUserName');
             if (dropdownUserName) {
-                dropdownUserName.textContent = userData.uname || userData.actid || 'User';
+                dropdownUserName.textContent = userName;
             }
             
             // Update top bar with user name
             const topUserName = document.getElementById('topUserName');
             const topUserNameText = document.getElementById('topUserNameText');
             if (topUserName && topUserNameText) {
-                topUserNameText.textContent = userData.uname || userData.actid || 'User';
+                topUserNameText.textContent = userName;
                 topUserName.style.setProperty('display', 'block', 'important');
             }
         }
@@ -278,12 +485,23 @@ async function loadUserInfo() {
         
     } catch (error) {
         console.error('❌ Error loading user info:', error);
+        // Hide margin balance display on error
+        const marginBalanceDisplay = document.getElementById('marginBalanceDisplay');
+        if (marginBalanceDisplay) {
+            marginBalanceDisplay.style.display = 'none';
+        }
     }
 }
 
 // Load orders and positions to calculate P&L and counts
 async function loadOrdersAndPositions() {
     try {
+        // Don't try to load if not authenticated
+        if (!isAuthenticated) {
+            console.log('⏭️ Skipping orders/positions load - user not authenticated');
+            return;
+        }
+        
         console.log('🔄 ========== Loading orders and positions ==========');
         
         let totalPnL = 0;
@@ -390,9 +608,8 @@ async function loadOrdersAndPositions() {
             pnlTodayEl.className = totalPnL >= 0 ? 'value price-up' : 'value price-down';
             console.log(`✅ P&L display updated successfully: ₹${formattedPnL}`);
         } else {
-            console.error('❌ pnlToday element not found in DOM!');
-            console.error('Available elements with "pnl" in id:', 
-                Array.from(document.querySelectorAll('[id*="pnl"]')).map(el => el.id));
+            // Element doesn't exist in this UI - this is expected, not an error
+            console.log('ℹ️ pnlToday element not found (not in this UI)');
         }
         
         // Get orders for count
@@ -439,14 +656,15 @@ async function loadOrdersAndPositions() {
         
         console.log('📊 Total orders count:', orderCount, '(Total orders today:', orders.length, ')');
         
-        // Update orders count
+        // Update orders count (if element exists)
         const ordersCountEl = document.getElementById('ordersCount');
         if (ordersCountEl) {
             ordersCountEl.textContent = orderCount;
             console.log(`📊 Updated orders count: ${orderCount}`);
         } else {
-            console.error('❌ ordersCount element not found');
-                }
+            // Element doesn't exist in this UI - this is expected, not an error
+            console.log('ℹ️ ordersCount element not found (not in this UI)');
+        }
 
                 console.log('✅ P&L and Orders loaded:', { totalPnL, orderCount, positionsCount: positions.length, totalOrders: orders.length });
         
@@ -487,6 +705,20 @@ async function refreshPrice() {
                 niftyPriceEl.className = change >= 0 ? 'value price-up' : 'value price-down';
             }
             
+            // Update NIFTY in market indices bar
+            const niftyExpiryPriceEl = document.getElementById('niftyExpiryPrice');
+            if (niftyExpiryPriceEl) {
+                niftyExpiryPriceEl.textContent = price.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+                niftyExpiryPriceEl.style.color = change >= 0 ? '#10b981' : '#ef4444';
+            }
+            
+            const niftyExpiryChangeEl = document.getElementById('niftyExpiryChange');
+            if (niftyExpiryChangeEl) {
+                const changeText = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%)`;
+                niftyExpiryChangeEl.textContent = changeText;
+                niftyExpiryChangeEl.style.color = change >= 0 ? '#10b981' : '#ef4444';
+            }
+            
             const niftyChangeEl = document.getElementById('niftyChange');
             if (niftyChangeEl) {
                 const changeText = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%)`;
@@ -514,6 +746,28 @@ async function refreshPrice() {
             console.log('✅ NIFTY updated:', price, 'Change:', change);
         }
         
+        // Update SENSEX
+        if (data.sensex && data.sensex.price) {
+            const price = parseFloat(data.sensex.price);
+            const change = parseFloat(data.sensex.change || 0);
+            const changePct = parseFloat(data.sensex.pChange || 0);
+            
+            const sensexPriceEl = document.getElementById('sensexPrice');
+            if (sensexPriceEl) {
+                sensexPriceEl.textContent = price.toLocaleString('en-IN', { minimumFractionDigits: 2 });
+                sensexPriceEl.style.color = change >= 0 ? '#10b981' : '#ef4444';
+            }
+            
+            const sensexChangeEl = document.getElementById('sensexChange');
+            if (sensexChangeEl) {
+                const changeText = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%)`;
+                sensexChangeEl.textContent = changeText;
+                sensexChangeEl.style.color = change >= 0 ? '#10b981' : '#ef4444';
+            }
+            
+            console.log('✅ SENSEX updated:', price, 'Change:', change);
+        }
+        
         // Update BANKNIFTY
         if (data.banknifty && data.banknifty.price) {
             const price = parseFloat(data.banknifty.price);
@@ -523,14 +777,14 @@ async function refreshPrice() {
             const bankniftyPriceEl = document.getElementById('bankniftyPrice');
             if (bankniftyPriceEl) {
                 bankniftyPriceEl.textContent = price.toLocaleString('en-IN', { minimumFractionDigits: 2 });
-                bankniftyPriceEl.className = change >= 0 ? 'value price-up' : 'value price-down';
+                bankniftyPriceEl.style.color = change >= 0 ? '#10b981' : '#ef4444';
             }
             
             const bankniftyChangeEl = document.getElementById('bankniftyChange');
             if (bankniftyChangeEl) {
                 const changeText = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%)`;
                 bankniftyChangeEl.textContent = changeText;
-                bankniftyChangeEl.className = change >= 0 ? 'price-up' : 'price-down';
+                bankniftyChangeEl.style.color = change >= 0 ? '#10b981' : '#ef4444';
             }
             
             console.log('✅ BANKNIFTY updated:', price, 'Change:', change);
@@ -545,14 +799,14 @@ async function refreshPrice() {
             const vixPriceEl = document.getElementById('vixPrice');
             if (vixPriceEl) {
                 vixPriceEl.textContent = price.toLocaleString('en-IN', { minimumFractionDigits: 2 });
-                vixPriceEl.className = change >= 0 ? 'value price-up' : 'value price-down';
+                vixPriceEl.style.color = change >= 0 ? '#10b981' : '#ef4444';
             }
             
             const vixChangeEl = document.getElementById('vixChange');
             if (vixChangeEl) {
                 const changeText = `${change >= 0 ? '+' : ''}${change.toFixed(2)} (${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%)`;
                 vixChangeEl.textContent = changeText;
-                vixChangeEl.className = change >= 0 ? 'price-up' : 'price-down';
+                vixChangeEl.style.color = change >= 0 ? '#10b981' : '#ef4444';
             }
             
             console.log('✅ VIX updated:', price, 'Change:', change);
@@ -986,33 +1240,43 @@ async function placeOrderNow(trantype) {
 function updateBasketDisplay() {
     const container = document.getElementById('basketContainer');
     const placeAllBtn = document.getElementById('placeAllBtn');
+    const basketCountHeader = document.getElementById('basketCountHeader');
+    
+    if (basketCountHeader) {
+        basketCountHeader.textContent = basketOrders.length;
+    }
     
     if (basketOrders.length === 0) {
-        container.innerHTML = `
-            <div class="text-center text-muted py-4">
-                <i class="fas fa-shopping-basket fa-3x mb-3 opacity-50"></i>
-                <p>No orders in basket<br><small>Add orders using the form</small></p>
-            </div>
-        `;
-        placeAllBtn.disabled = true;
+        if (container) {
+            container.innerHTML = `
+                <div class="empty-state">
+                    <i class="fas fa-shopping-basket"></i>
+                    <div style="font-size:16px; margin-bottom:8px;">No orders in basket</div>
+                    <small>Orders will appear here when added</small>
+                </div>
+            `;
+        }
+        if (placeAllBtn) placeAllBtn.disabled = true;
         return;
     }
     
-    container.innerHTML = basketOrders.map(order => `
-        <div class="basket-item">
-            <div class="d-flex justify-content-between align-items-center">
-                <div>
-                    <strong>${order.tradingSymbol}</strong><br>
-                    <small>${order.trantype} ${order.quantity} @ ${order.orderType} ${order.price ? '₹' + order.price : 'Market'}</small>
+    if (placeAllBtn) placeAllBtn.disabled = false;
+    
+    if (container) {
+        container.innerHTML = basketOrders.map(order => `
+            <div class="basket-item">
+                <div style="flex:1;">
+                    <div class="symbol">${order.tradingSymbol || order.symbol || 'N/A'}</div>
+                    <div class="details">
+                        ${order.trantype || order.action || 'BUY'} • ${order.quantity || 0} qty • ${order.orderType === 'LIMIT' ? '₹' + (order.price || 0) : 'Market'} • ${order.product || 'MIS'}
+                    </div>
                 </div>
-                <button class="btn btn-sm btn-outline-light" onclick="removeFromBasket(${order.id})">
+                <button class="remove-btn" onclick="removeFromBasket(${order.id})" title="Remove">
                     <i class="fas fa-times"></i>
                 </button>
             </div>
-        </div>
-    `).join('');
-    
-    placeAllBtn.disabled = false;
+        `).join('');
+    }
 }
 
 // Remove from basket
@@ -1112,13 +1376,37 @@ async function placeAllOrders() {
     }
 }
 
+// Store all orders for filtering
+let allTodayOrders = [];
+
 // Load today's orders
 async function loadTodaysOrders() {
     try {
+        // Don't try to load orders if not authenticated
+        if (!isAuthenticated) {
+            console.log('⏭️ Skipping orders load - user not authenticated');
+            const container = document.getElementById('todaysOrders');
+            if (container) {
+                container.innerHTML = `
+                    <div class="empty-state" style="padding:40px 20px;">
+                        <i class="fas fa-clipboard-list"></i>
+                        <div style="font-size:14px; color:#64748b;">No orders today</div>
+                    </div>
+                `;
+            }
+            return;
+        }
+        
         console.log('📋 Loading today\'s orders...');
         const response = await fetch('/api/orders', { credentials: 'include' });
         
         if (!response.ok) {
+            if (response.status === 401) {
+                // Unauthorized - user is not logged in
+                console.log('🔒 Unauthorized - user not logged in');
+                isAuthenticated = false;
+                return;
+            }
             console.error('❌ Orders API error:', response.status, response.statusText);
             return;
         }
@@ -1133,29 +1421,18 @@ async function loadTodaysOrders() {
         }
         
         const orders = result.data || result.values || [];
+        allTodayOrders = orders; // Store for filtering
         
         if (Array.isArray(orders) && orders.length > 0) {
-            console.log(`✅ Displaying ${orders.length} orders`);
-            container.innerHTML = orders.slice(0, 5).map(order => {
-                const symbol = order.tsym || order.tradingsymbol || 'N/A';
-                const trantype = order.trantype === 'B' || order.transactiontype === 'BUY' ? 'BUY' : 'SELL';
-                const qty = order.qty || order.quantity || 0;
-                const price = parseFloat(order.prc || order.price || 0); // Ensure price is a number
-                const status = order.status || order.orderstatus || 'UNKNOWN';
-                
-                return `
-                    <div class="small border-bottom py-2">
-                        <strong>${symbol}</strong><br>
-                        <small class="text-muted">${trantype} ${qty} @ ₹${price > 0 ? price.toFixed(2) : 'Market'}</small><br>
-                        <small class="text-muted" style="font-size:10px;">Status: ${status}</small>
-                    </div>
-                `;
-            }).join('');
+            console.log(`✅ Loaded ${orders.length} orders`);
+            renderTodayOrders(orders);
         } else {
             console.log('📋 No orders found');
+            allTodayOrders = [];
             container.innerHTML = `
-                <div class="text-center text-muted py-3">
-                    <small>No orders today</small>
+                <div class="empty-state" style="padding:40px 20px;">
+                    <i class="fas fa-clipboard-list"></i>
+                    <div style="font-size:14px; color:#64748b;">No orders today</div>
                 </div>
             `;
         }
@@ -1172,11 +1449,225 @@ async function loadTodaysOrders() {
     }
 }
 
+// Render orders with filtering
+function renderTodayOrders(orders) {
+    const container = document.getElementById('todaysOrders');
+    if (!container) return;
+    
+    if (orders.length === 0) {
+        container.innerHTML = `
+            <div class="empty-state" style="padding:40px 20px;">
+                <i class="fas fa-clipboard-list"></i>
+                <div style="font-size:14px; color:#64748b;">No orders match your filters</div>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = orders.map(order => {
+        const symbol = order.tsym || order.tradingsymbol || 'N/A';
+        const trantype = order.trantype === 'B' || order.transactiontype === 'BUY' ? 'BUY' : 'SELL';
+        const qty = order.qty || order.quantity || 0;
+        const price = parseFloat(order.prc || order.price || 0);
+        const status = order.status || order.orderstatus || order.stat || 'UNKNOWN';
+        const time = order.exch_tm || order.time || order.exchordtime || 'N/A';
+        const orderId = order.norenordno || order.orderid || 'N/A';
+        
+        const statusColor = status === 'COMPLETE' || status === 'Ok' ? '#10b981' : 
+                          status === 'REJECTED' ? '#ef4444' : 
+                          status === 'CANCELED' || status === 'CANCEL' ? '#f59e0b' : 
+                          status === 'OPEN' || status === 'PENDING' ? '#3b82f6' : '#64748b';
+        
+        return `
+            <div class="basket-item" style="margin-bottom:8px;" data-order-id="${orderId}" data-symbol="${symbol}" data-status="${status}" data-type="${trantype}">
+                <div style="flex:1;">
+                    <div class="symbol">${symbol}</div>
+                    <div class="details">
+                        ${trantype} • ${qty} qty • ${price > 0 ? '₹' + price.toFixed(2) : 'Market'} • ${time}
+                    </div>
+                    <div style="font-size:10px; color:#64748b; margin-top:4px;">Order ID: ${orderId}</div>
+                </div>
+                <div style="color:${statusColor}; font-weight:600; font-size:12px; text-align:right;">
+                    <div>${status}</div>
+                    ${status === 'OPEN' || status === 'PENDING' ? `
+                        <button class="btn btn-xs" onclick="cancelOrder('${orderId}')" style="margin-top:4px; padding:4px 8px; background:#ef4444; color:white; border:none; font-size:10px; border-radius:4px;">
+                            Cancel
+                        </button>
+                    ` : ''}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+// Store current filter values
+let currentStatusFilter = 'all';
+let currentTypeFilter = 'all';
+
+// Set filter value
+function setFilter(filterType, value) {
+    if (filterType === 'status') {
+        currentStatusFilter = value;
+        // Update button states
+        document.querySelectorAll('[data-filter="status"]').forEach(btn => {
+            btn.classList.remove('active');
+            btn.style.background = '#1e293b';
+            btn.style.color = btn.dataset.value === 'COMPLETE' ? '#10b981' : 
+                              btn.dataset.value === 'OPEN' ? '#3b82f6' :
+                              btn.dataset.value === 'PENDING' ? '#f59e0b' :
+                              btn.dataset.value === 'REJECTED' ? '#ef4444' :
+                              btn.dataset.value === 'CANCELED' ? '#f59e0b' : '#e2e8f0';
+            btn.style.border = '1px solid #334155';
+        });
+        const activeBtn = document.querySelector(`[data-filter="status"][data-value="${value}"]`);
+        if (activeBtn) {
+            activeBtn.classList.add('active');
+            activeBtn.style.background = '#3b82f6';
+            activeBtn.style.color = 'white';
+            activeBtn.style.borderColor = '#3b82f6';
+        }
+    } else if (filterType === 'type') {
+        currentTypeFilter = value;
+        // Update button states
+        document.querySelectorAll('[data-filter="type"]').forEach(btn => {
+            btn.classList.remove('active');
+            btn.style.background = '#1e293b';
+            btn.style.color = btn.dataset.value === 'BUY' ? '#10b981' : 
+                              btn.dataset.value === 'SELL' ? '#ef4444' : '#e2e8f0';
+            btn.style.border = '1px solid #334155';
+        });
+        const activeBtn = document.querySelector(`[data-filter="type"][data-value="${value}"]`);
+        if (activeBtn) {
+            activeBtn.classList.add('active');
+            activeBtn.style.background = '#3b82f6';
+            activeBtn.style.color = 'white';
+            activeBtn.style.borderColor = '#3b82f6';
+        }
+    }
+    
+    // Apply filters
+    filterTodayOrders();
+}
+
+// Filter today's orders
+function filterTodayOrders() {
+    const searchInput = document.getElementById('orderSearchInput');
+    const searchTerm = (searchInput?.value || '').toLowerCase().trim();
+    
+    let filteredOrders = [...allTodayOrders];
+    
+    // Apply search filter
+    if (searchTerm) {
+        filteredOrders = filteredOrders.filter(order => {
+            const symbol = (order.tsym || order.tradingsymbol || '').toLowerCase();
+            const orderId = (order.norenordno || order.orderid || '').toString();
+            return symbol.includes(searchTerm) || orderId.includes(searchTerm);
+        });
+    }
+    
+    // Apply status filter
+    if (currentStatusFilter !== 'all') {
+        filteredOrders = filteredOrders.filter(order => {
+            const status = (order.status || order.orderstatus || order.stat || '').toUpperCase();
+            return status === currentStatusFilter.toUpperCase() || 
+                   (currentStatusFilter === 'COMPLETE' && status === 'OK');
+        });
+    }
+    
+    // Apply type filter
+    if (currentTypeFilter !== 'all') {
+        filteredOrders = filteredOrders.filter(order => {
+            const trantype = order.trantype === 'B' || order.transactiontype === 'BUY' ? 'BUY' : 'SELL';
+            return trantype === currentTypeFilter;
+        });
+    }
+    
+    // Render filtered orders
+    renderTodayOrders(filteredOrders);
+}
+
+// Clear all filters
+function clearOrderFilters() {
+    const searchInput = document.getElementById('orderSearchInput');
+    
+    if (searchInput) searchInput.value = '';
+    
+    // Reset filter values
+    currentStatusFilter = 'all';
+    currentTypeFilter = 'all';
+    
+    // Reset button states
+    document.querySelectorAll('[data-filter="status"]').forEach(btn => {
+        btn.classList.remove('active');
+        btn.style.background = '#1e293b';
+        btn.style.color = btn.dataset.value === 'COMPLETE' ? '#10b981' : 
+                          btn.dataset.value === 'OPEN' ? '#3b82f6' :
+                          btn.dataset.value === 'PENDING' ? '#f59e0b' :
+                          btn.dataset.value === 'REJECTED' ? '#ef4444' :
+                          btn.dataset.value === 'CANCELED' ? '#f59e0b' : '#e2e8f0';
+        btn.style.border = '1px solid #334155';
+    });
+    
+    document.querySelectorAll('[data-filter="type"]').forEach(btn => {
+        btn.classList.remove('active');
+        btn.style.background = '#1e293b';
+        btn.style.color = btn.dataset.value === 'BUY' ? '#10b981' : 
+                          btn.dataset.value === 'SELL' ? '#ef4444' : '#e2e8f0';
+        btn.style.border = '1px solid #334155';
+    });
+    
+    // Set "All" buttons as active
+    const statusAllBtn = document.querySelector('[data-filter="status"][data-value="all"]');
+    const typeAllBtn = document.querySelector('[data-filter="type"][data-value="all"]');
+    if (statusAllBtn) {
+        statusAllBtn.classList.add('active');
+        statusAllBtn.style.background = '#3b82f6';
+        statusAllBtn.style.color = 'white';
+        statusAllBtn.style.borderColor = '#3b82f6';
+    }
+    if (typeAllBtn) {
+        typeAllBtn.classList.add('active');
+        typeAllBtn.style.background = '#3b82f6';
+        typeAllBtn.style.color = 'white';
+        typeAllBtn.style.borderColor = '#3b82f6';
+    }
+    
+    // Render all orders
+    renderTodayOrders(allTodayOrders);
+}
+
+// Cancel order
+async function cancelOrder(orderId) {
+    if (!confirm(`Are you sure you want to cancel order ${orderId}?`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/cancel-order', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'include',
+            body: JSON.stringify({ orderId })
+        });
+        
+        const result = await response.json();
+        
+        if (result.stat === 'Ok' || result.success) {
+            showAlert(`Order ${orderId} cancelled successfully`, 'success');
+            // Reload orders
+            await loadTodaysOrders();
+        } else {
+            showAlert(`Failed to cancel order: ${result.emsg || result.message || 'Unknown error'}`, 'danger');
+        }
+    } catch (error) {
+        console.error('Error cancelling order:', error);
+        showAlert('Error cancelling order: ' + error.message, 'danger');
+    }
+}
+
 // Refresh orders manually
 function refreshOrders() {
     loadTodaysOrders();
-    loadOrdersAndPositions();
-    loadOrdersTable();
 }
 
 // Load and display orders in the main Orders table
@@ -1419,107 +1910,383 @@ function populateExpiryDatesFallback() {
     console.log('✅ Expiry dates populated (fallback - 8 Thursdays)');
 }
 
+// Toggle Margin Details Dropdown
+function toggleMarginDetails() {
+    const dropdown = document.getElementById('marginDetailsDropdown');
+    const chevron = document.getElementById('marginChevron');
+    
+    if (dropdown && chevron) {
+        const isVisible = dropdown.style.display === 'block';
+        dropdown.style.display = isVisible ? 'none' : 'block';
+        chevron.style.transform = isVisible ? 'rotate(0deg)' : 'rotate(180deg)';
+    }
+}
+
+// Toggle Profile Dropdown
+function toggleProfileDropdown() {
+    const dropdown = document.getElementById('profileDropdown');
+    const chevron = document.getElementById('profileChevron');
+    
+    if (dropdown && chevron) {
+        const isVisible = dropdown.style.display === 'block';
+        dropdown.style.display = isVisible ? 'none' : 'block';
+        chevron.style.transform = isVisible ? 'rotate(0deg)' : 'rotate(180deg)';
+        
+        // Close margin dropdown if open
+        const marginDropdown = document.getElementById('marginDetailsDropdown');
+        const marginChevron = document.getElementById('marginChevron');
+        if (marginDropdown && marginChevron) {
+            marginDropdown.style.display = 'none';
+            marginChevron.style.transform = 'rotate(0deg)';
+        }
+    }
+}
+
+// Close dropdowns when clicking outside
+document.addEventListener('click', function(event) {
+    // Close margin dropdown
+    const marginBalanceDisplay = document.getElementById('marginBalanceDisplay');
+    const marginDetailsDropdown = document.getElementById('marginDetailsDropdown');
+    
+    if (marginBalanceDisplay && marginDetailsDropdown) {
+        if (!marginBalanceDisplay.contains(event.target) && !marginDetailsDropdown.contains(event.target)) {
+            marginDetailsDropdown.style.display = 'none';
+            const chevron = document.getElementById('marginChevron');
+            if (chevron) {
+                chevron.style.transform = 'rotate(0deg)';
+            }
+        }
+    }
+    
+    // Close profile dropdown
+    const userStatusBtn = document.getElementById('userStatusBtn');
+    const profileDropdown = document.getElementById('profileDropdown');
+    
+    if (userStatusBtn && profileDropdown) {
+        if (!userStatusBtn.contains(event.target) && !profileDropdown.contains(event.target)) {
+            profileDropdown.style.display = 'none';
+            const chevron = document.getElementById('profileChevron');
+            if (chevron) {
+                chevron.style.transform = 'rotate(0deg)';
+            }
+        }
+    }
+});
+
+// Theme Toggle Function
+function toggleTheme() {
+    const html = document.documentElement;
+    const currentTheme = html.getAttribute('data-theme');
+    const newTheme = currentTheme === 'light' ? 'dark' : 'light';
+    
+    html.setAttribute('data-theme', newTheme);
+    localStorage.setItem('theme', newTheme);
+    
+    // Update icon
+    const themeIcon = document.getElementById('themeIcon');
+    if (themeIcon) {
+        if (newTheme === 'light') {
+            themeIcon.className = 'fas fa-sun';
+        } else {
+            themeIcon.className = 'fas fa-moon';
+        }
+    }
+    
+    console.log(`✅ Theme switched to ${newTheme} mode`);
+}
+
+// Initialize Theme
+function initTheme() {
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    const html = document.documentElement;
+    html.setAttribute('data-theme', savedTheme);
+    
+    // Update icon based on saved theme
+    const themeIcon = document.getElementById('themeIcon');
+    if (themeIcon) {
+        if (savedTheme === 'light') {
+            themeIcon.className = 'fas fa-sun';
+        } else {
+            themeIcon.className = 'fas fa-moon';
+        }
+    }
+    
+    console.log(`✅ Theme initialized to ${savedTheme} mode`);
+}
+
 // Initialize app
 document.addEventListener('DOMContentLoaded', function() {
     console.log('🚀 FiFTO TRADER UI loaded - checking authentication...');
     
-    // Check auth first, then populate expiry dates
-    checkAuthStatus();
+    // Initialize theme first
+    initTheme();
     
-    // Wait a bit then populate expiry dates (after auth check)
-    setTimeout(() => {
-        const symbol = document.getElementById('symbol')?.value || 'NIFTY';
-        console.log(`📅 Initializing expiry dates for ${symbol}...`);
-        populateExpiryDates(symbol);
-    }, 1000);
-    
-    // Symbol change handler
-    const symbolSelect = document.getElementById('symbol');
-    if (symbolSelect) {
-        symbolSelect.addEventListener('change', function() {
-            const selectedSymbol = symbolSelect.value;
-            console.log(`🔄 Symbol changed to: ${selectedSymbol}`);
-            
-            // Update default quantity based on symbol
-            const quantityInput = document.getElementById('quantity');
-            const actualQtyInput = document.getElementById('actualQuantity');
-            if (quantityInput && actualQtyInput) {
-                let multiplier = 75;
-                if (selectedSymbol === 'NIFTY') {
-                    quantityInput.value = 1; // Default 1 lot for NIFTY
-                    multiplier = 75;
-                } else if (selectedSymbol === 'BANKNIFTY') {
-                    quantityInput.value = 1; // Default 1 lot for BANKNIFTY
-                    multiplier = 35;
-                } else if (selectedSymbol === 'FINNIFTY') {
-                    quantityInput.value = 1; // Default 1 lot for FINNIFTY
-                    multiplier = 40;
+    // Initialize profile button click handler
+    const userStatusBtn = document.getElementById('userStatusBtn');
+    if (userStatusBtn) {
+        // Remove any existing listeners to avoid duplicates
+        const newBtn = userStatusBtn.cloneNode(true);
+        userStatusBtn.parentNode.replaceChild(newBtn, userStatusBtn);
+        
+        // Add fresh event listener
+        const profileBtn = document.getElementById('userStatusBtn');
+        if (profileBtn) {
+            profileBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // Check authentication status before deciding action
+                const userStatusText = document.getElementById('userStatus');
+                const isLoggedIn = userStatusText && userStatusText.textContent !== 'Not Logged In';
+                
+                if (!isLoggedIn || !isAuthenticated) {
+                    console.log('🔄 User not authenticated, triggering login...');
+                    quickLogin();
+                } else {
+                    console.log('👤 User authenticated, showing profile dropdown...');
+                    toggleProfileDropdown();
                 }
-                actualQtyInput.value = multiplier; // Set default quantity
-            }
-            
-            refreshPrice();
-            populateExpiryDates(selectedSymbol); // Refresh expiry dates for new symbol
-        });
+            });
+        }
     }
+    
+    // Check auth first, then populate expiry dates
+    checkAuthStatus().then(() => {
+        // Initialize basket display
+        updateBasketDisplay();
+        
+        // Load today's orders only after auth check completes
+        // (loadTodaysOrders already checks isAuthenticated internally)
+        loadTodaysOrders();
+    });
     
     // Auto-refresh auth status every 30 seconds
     setInterval(checkAuthStatus, 30000);
     
-    // Auto-refresh price every 1 minute (60 seconds)
-    setInterval(refreshPrice, 60000);
-    
-    // Auto-refresh P&L and orders every 30 seconds
+    // Auto-refresh orders every 30 seconds
     setInterval(() => {
         if (isAuthenticated) {
-            console.log('🔄 Auto-refreshing P&L and orders...');
-            loadOrdersAndPositions();
-            loadOrdersTable(); // Also refresh orders table
+            loadTodaysOrders();
         }
     }, 30000);
     
-    // Load orders table on initial load after auth check
-    setTimeout(() => {
-        if (isAuthenticated) {
-            loadOrdersTable();
+    console.log('✅ Order Basket UI initialized');
+});
+
+// Navigation handler - show/hide sections based on hash
+function handleNavigation() {
+    const hash = window.location.hash || '#markets';
+    const hashName = hash.substring(1); // Remove #
+    
+    console.log('🧭 Navigation:', hashName);
+    
+    // Fix structure: ensure all page sections are siblings of main-content
+    const mainContent = document.querySelector('.main-content');
+    const pageOptionChain = document.getElementById('page-optionchain');
+    const pageOrders = document.getElementById('page-orders');
+    const pagePrice = document.getElementById('page-price');
+    
+    if (mainContent && pageOptionChain) {
+        // If page-optionchain is nested in page-orders or page-price, move it out
+        if ((pageOrders && pageOrders.contains(pageOptionChain)) || 
+            (pagePrice && pagePrice.contains(pageOptionChain))) {
+            const pagePositions = document.getElementById('page-positions');
+            if (pagePositions && pagePositions.parentElement === mainContent) {
+                mainContent.insertBefore(pageOptionChain, pagePositions);
+                console.log('🔧 Fixed: Moved page-optionchain to be a sibling');
+            } else {
+                mainContent.appendChild(pageOptionChain);
+            }
         }
-    }, 2000);
-    
-    // Initialize option type and product buttons
-    selectOptionType('CE'); // Set CE as default
-    selectProduct('MIS'); // Set MIS as default
-    
-    // Initialize quantity display
-    updateQuantityFromLot();
-    
-    // Add mouse wheel event listener to lot size input for instant scroll increment/decrement
-    const quantityInput = document.getElementById('quantity');
-    if (quantityInput) {
-        quantityInput.addEventListener('wheel', handleLotScroll, { passive: false });
     }
     
-    // Add mouse wheel event listener to strike price input for instant scroll increment/decrement
-    const strikeInput = document.getElementById('strikePrice');
-    if (strikeInput) {
-        strikeInput.addEventListener('wheel', handleStrikeScroll, { passive: false });
+    // Hide all sections
+    document.querySelectorAll('.page-section').forEach(section => {
+        section.classList.remove('active');
+        section.style.display = 'none';
+        section.style.opacity = '0';
+        section.style.visibility = 'hidden';
+    });
+    
+    // Show active section
+    let activeSection = document.getElementById(`page-${hashName}`);
+    
+    // Map navigation items to page sections
+    const navMap = {
+        'markets': 'page-price',
+        'watchlist': 'page-price',
+        'portfolio': 'page-price',
+        'orders': 'page-orders',
+        'positions': 'page-positions',
+        'optionchain': 'page-optionchain'
+    };
+    
+    if (navMap[hashName]) {
+        activeSection = document.getElementById(navMap[hashName]);
+        console.log('📍 Found section via navMap:', navMap[hashName], activeSection ? '✅' : '❌');
     }
     
-    console.log('⏰ Auto-refresh enabled: Auth (30s), Price (60s), P&L (30s)');
+    if (activeSection) {
+        activeSection.classList.add('active');
+        activeSection.style.display = 'block';
+        activeSection.style.opacity = '1';
+        activeSection.style.visibility = 'visible';
+        console.log('✅ Activated section:', activeSection.id);
+    } else {
+        console.error('❌ Section not found for:', hashName);
+        // Default to markets page if hash doesn't match
+        const priceSection = document.getElementById('page-price');
+        if (priceSection) {
+            priceSection.classList.add('active');
+            priceSection.style.display = 'block';
+            priceSection.style.opacity = '1';
+            priceSection.style.visibility = 'visible';
+            window.location.hash = '#markets';
+        }
+    }
     
-    // Load positions page when hash changes to #positions
-    window.addEventListener('hashchange', function() {
-        if (window.location.hash === '#positions') {
-            loadPositionsPage();
+    // Update top navigation active state
+    document.querySelectorAll('.top-nav a').forEach(link => {
+        link.classList.remove('active');
+        if (link.getAttribute('href') === hash) {
+            link.classList.add('active');
         }
     });
     
-    // Load positions page on initial load if hash is #positions
-    if (window.location.hash === '#positions') {
+    // Load specific page data
+    if (hashName === 'positions') {
         loadPositionsPage();
+    } else if (hashName === 'orders') {
+        loadOrdersTable();
+    } else if (hashName === 'optionchain') {
+        console.log('📊 Loading option chain...');
+        loadOptionChain();
     }
+}
+
+// Toggle Total P&L details dropdown
+function toggleTotalPnLDetails() {
+    // TODO: Implement dropdown with detailed P&L breakdown
+    console.log('Toggle Total P&L details');
+}
+
+// Handle hash changes
+window.addEventListener('hashchange', function() {
+    handleNavigation();
 });
 
-// Load positions page with P&L and open orders
+// Parse symbol to extract instrument details
+function parseSymbol(symbol) {
+    // Flattrade symbols come in formats like:
+    // "NATURALGAS20NOV25C350" or "NIFTY04NOV25C25850" or "NIFTY11NOV25C25900"
+    // Format: [INSTRUMENT][DD][MMM][YY][C/P][STRIKE]
+    
+    if (!symbol || symbol === 'N/A') {
+        return {
+            instrument: symbol,
+            exchange: '',
+            expiry: '',
+            strike: '',
+            type: ''
+        };
+    }
+    
+    const monthMap = {
+        'JAN': 'Jan', 'FEB': 'Feb', 'MAR': 'Mar', 'APR': 'Apr',
+        'MAY': 'May', 'JUN': 'Jun', 'JUL': 'Jul', 'AUG': 'Aug',
+        'SEP': 'Sep', 'OCT': 'Oct', 'NOV': 'Nov', 'DEC': 'Dec'
+    };
+    
+    // Try to parse NIFTY/BANKNIFTY format: NIFTY04NOV25C25850
+    const niftyMatch = symbol.match(/^(NIFTY|BANKNIFTY|FINNIFTY|MIDCPNIFTY)(\d{2})([A-Z]{3})(\d{2})([CP])(\d+)$/);
+    if (niftyMatch) {
+        const [, instrument, day, month, year, type, strike] = niftyMatch;
+        const fullYear = '20' + year;
+        const expiry = `${day} ${monthMap[month] || month} ${fullYear}`;
+        return {
+            instrument,
+            exchange: 'NFO',
+            expiry,
+            strike,
+            type: type === 'C' ? 'CE' : 'PE'
+        };
+    }
+    
+    // Try to parse commodity format: NATURALGAS20NOV25C340
+    // Use a more specific pattern that doesn't match NIFTY variants
+    const commodityMatch = symbol.match(/^([A-Z]+)(\d{2})([A-Z]{3})(\d{2})([CP])(\d+)$/);
+    if (commodityMatch) {
+        const [, instrument, day, month, year, type, strike] = commodityMatch;
+        // Skip if it matches NIFTY pattern (should have been caught above)
+        if (!instrument.includes('NIFTY') && !instrument.includes('BANK') && !instrument.includes('FIN')) {
+            const fullYear = '20' + year;
+            const expiry = `${day} ${monthMap[month] || month} ${fullYear}`;
+            return {
+                instrument,
+                exchange: 'MCX',
+                expiry,
+                strike,
+                type: type === 'C' ? 'CE' : 'PE'
+            };
+        }
+    }
+    
+    // If format doesn't match, try space-separated format
+    const parts = symbol.split(' ');
+    if (parts.length >= 5) {
+        const instrument = parts[0];
+        const exchange = parts[1];
+        let expiry = '';
+        let strike = '';
+        let type = '';
+        
+        if (parts.length >= 5) {
+            if (!isNaN(parseInt(parts[2]))) {
+                expiry = `${parts[2]} ${parts[3]} ${parts[4]}`;
+                strike = parts[5] || '';
+                type = parts[6] || '';
+            } else {
+                expiry = parts.slice(2, 5).join(' ');
+                strike = parts[5] || '';
+                type = parts[6] || '';
+            }
+        }
+        
+        return { instrument, exchange, expiry, strike, type };
+    }
+    
+    // Default: return as-is
+    return {
+        instrument: symbol,
+        exchange: '',
+        expiry: '',
+        strike: '',
+        type: ''
+    };
+}
+
+// Get lot size for instrument
+function getLotSize(instrument, exchange) {
+    const lotSizes = {
+        'NIFTY': 75,
+        'BANKNIFTY': 35,
+        'FINNIFTY': 50,
+        'MIDCPNIFTY': 75,
+        'NATURALGAS': 1250
+    };
+    
+    // Check if it's a known index
+    for (const [key, value] of Object.entries(lotSizes)) {
+        if (instrument.includes(key)) {
+            return value;
+        }
+    }
+    
+    // Default lot size
+    return exchange === 'MCX' ? 1250 : 75;
+}
+
+// Load positions page with new format matching the image
 async function loadPositionsPage() {
     try {
         console.log('📊 Loading positions page...');
@@ -1531,7 +2298,7 @@ async function loadPositionsPage() {
             console.error('❌ Positions API error:', positionsResponse.status);
             document.getElementById('positionsTableBody').innerHTML = `
                 <tr>
-                    <td colspan="9" class="text-center py-4" style="color:#ef4444;">
+                    <td colspan="6" class="text-center py-4" style="color:#ef4444;">
                         Error loading positions
                     </td>
                 </tr>
@@ -1548,21 +2315,17 @@ async function loadPositionsPage() {
             
             document.getElementById('positionsTableBody').innerHTML = `
                 <tr>
-                    <td colspan="9" class="text-center py-4" style="color:#64748b;">
-                        ${errorMsg === 'no data' ? 'No open positions' : errorMsg}
+                    <td colspan="6" class="text-center py-4" style="color:#64748b;">
+                        ${errorMsg === 'no data' ? 'No positions found' : errorMsg}
                     </td>
                 </tr>
             `;
             
-            // Reset P&L displays
+            // Reset displays
             const totalPnLEl = document.getElementById('positionsTotalPnL');
-            const realizedPnLEl = document.getElementById('positionsRealizedPnL');
-            const unrealizedPnLEl = document.getElementById('positionsUnrealizedPnL');
             const positionsCountEl = document.getElementById('positionsCount');
             
             if (totalPnLEl) totalPnLEl.textContent = '₹0.00';
-            if (realizedPnLEl) realizedPnLEl.textContent = '₹0.00';
-            if (unrealizedPnLEl) unrealizedPnLEl.textContent = '₹0.00';
             if (positionsCountEl) positionsCountEl.textContent = '0';
             
             return;
@@ -1570,7 +2333,7 @@ async function loadPositionsPage() {
         
         const positions = positionsResult.data || positionsResult || [];
         
-        // Handle different response formats (array, object with values, etc.)
+        // Handle different response formats
         let positionsArray = [];
         if (Array.isArray(positions)) {
             positionsArray = positions;
@@ -1578,121 +2341,148 @@ async function loadPositionsPage() {
             positionsArray = positionsResult.values;
         }
         
-        // Calculate P&L totals from ALL positions (both open and closed)
-        // Realized P&L can come from closed positions, Unrealized P&L from open positions
-        // According to Flattrade API docs:
-        // - rpnl: Realized P&L (profit/loss from closed positions)
-        // - urmtom: Unrealized P&L/MTM (mark-to-market for open positions)
-        let totalRealizedPnL = 0;
-        let totalUnrealizedPnL = 0;
+        // Calculate total P&L
         let totalPnL = 0;
-        
-        // Calculate P&L from ALL positions first
         positionsArray.forEach(position => {
             const realizedPnL = parseFloat(position.rpnl || position.RPNL || 0);
             const unrealizedPnL = parseFloat(position.urmtom || position.URMTOM || position.upnl || position.UPNL || 0);
-            
-            // Debug logging for positions with realized P&L
-            if (realizedPnL !== 0) {
-                const symbol = position.tsym || position.TSYM || 'N/A';
-                console.log(`💰 Realized P&L found: ${symbol} = ₹${realizedPnL.toFixed(2)}`);
-            }
-            
-            totalRealizedPnL += realizedPnL;
-            totalUnrealizedPnL += unrealizedPnL;
             totalPnL += (realizedPnL + unrealizedPnL);
         });
         
-        console.log(`📊 P&L Summary: Realized=₹${totalRealizedPnL.toFixed(2)}, Unrealized=₹${totalUnrealizedPnL.toFixed(2)}, Total=₹${totalPnL.toFixed(2)}`);
-        
-        // Filter open positions: netqty != 0 (handle both string and number formats)
-        // According to Flattrade API docs: "Open positions" are those with non-zero net quantity
-        // Note: We filter AFTER calculating P&L because closed positions may have realized P&L
+        // Filter open positions (netqty != 0)
         const openPositions = positionsArray.filter(pos => {
-            // Handle both string "0" and number 0 formats
             const netQtyStr = String(pos.netqty || pos.NETQTY || '0').trim();
             const netQtyNum = parseFloat(netQtyStr);
-            
-            // Position is "open" if netqty is not "0" (as string) or not 0 (as number)
             return netQtyStr !== '0' && netQtyNum !== 0;
         });
         
-        // Update P&L summary
-        const totalPnLEl = document.getElementById('positionsTotalPnL');
-        const realizedPnLEl = document.getElementById('positionsRealizedPnL');
-        const unrealizedPnLEl = document.getElementById('positionsUnrealizedPnL');
+        // Update header count
         const positionsCountEl = document.getElementById('positionsCount');
-        
-        if (totalPnLEl) {
-            totalPnLEl.textContent = `₹${totalPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-            totalPnLEl.className = totalPnL >= 0 ? 'value price-up' : 'value price-down';
-        }
-        
-        if (realizedPnLEl) {
-            realizedPnLEl.textContent = `₹${totalRealizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-            realizedPnLEl.className = totalRealizedPnL >= 0 ? 'value price-up' : 'value price-down';
-        }
-        
-        if (unrealizedPnLEl) {
-            unrealizedPnLEl.textContent = `₹${totalUnrealizedPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-            unrealizedPnLEl.className = totalUnrealizedPnL >= 0 ? 'value price-up' : 'value price-down';
-        }
-        
         if (positionsCountEl) {
             positionsCountEl.textContent = openPositions.length;
         }
         
-        // Display ALL positions in "All Positions" table (including closed positions)
+        // Update footer total P&L
+        const totalPnLEl = document.getElementById('positionsTotalPnL');
+        if (totalPnLEl) {
+            const formattedPnL = totalPnL.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            totalPnLEl.textContent = `₹${formattedPnL}`;
+            totalPnLEl.style.color = totalPnL >= 0 ? '#10b981' : '#ef4444';
+        }
+        
+        // Display positions in table
         const positionsTableBody = document.getElementById('positionsTableBody');
         if (positionsTableBody) {
             if (positionsArray.length === 0) {
                 positionsTableBody.innerHTML = `
                     <tr>
-                        <td colspan="9" class="text-center py-4" style="color:#64748b;">
+                        <td colspan="6" class="text-center py-4" style="color:#64748b;">
                             No positions found
                         </td>
                     </tr>
                 `;
             } else {
                 positionsTableBody.innerHTML = positionsArray.map(position => {
-                    const symbol = position.tsym || position.TSYM || position.symbol || 'N/A';
-                    const exch = position.exch || position.EXCH || 'N/A';
-                    const product = position.s_prdt_ali || position.S_PRDT_ALI || position.prd || 'N/A';
+                    const symbol = (position.tsym || position.TSYM || position.symbol || 'N/A').trim();
+                    // Remove exchange from symbol if present (e.g., "NATURALGAS20NOV25C350 MCX" -> "NATURALGAS20NOV25C350")
+                    const symbolOnly = symbol.split(' ')[0];
+                    const parsed = parseSymbol(symbolOnly);
+                    const exch = position.exch || position.EXCH || parsed.exchange || 'NFO';
                     const netQty = parseFloat(position.netqty || position.NETQTY || 0);
+                    const buyQty = parseFloat(position.daybuyqty || position.DAYBUYQTY || position.daybuy || 0);
+                    const sellQty = parseFloat(position.daysellqty || position.DAYSELLQTY || position.daysell || 0);
+                    const buyPrice = parseFloat(position.buyavgprc || position.BUYAVGPRC || position.daybuyavgprc || 0);
+                    const sellPrice = parseFloat(position.sellavgprc || position.SELLAVGPRC || position.daysellavgprc || 0);
                     const avgPrice = parseFloat(position.netavgprc || position.NETAVGPRC || position.avgprc || position.AVGPRC || 0);
                     const ltp = parseFloat(position.lp || position.LP || position.ltp || position.LTP || 0);
+                    const previousClose = parseFloat(position.previousclose || position.PREVIOUSCLOSE || position.pc || 0);
                     const realizedPnL = parseFloat(position.rpnl || position.RPNL || 0);
                     const unrealizedPnL = parseFloat(position.urmtom || position.URMTOM || position.upnl || position.UPNL || 0);
                     const positionPnL = realizedPnL + unrealizedPnL;
                     
-                    // Color coding: green for positive, red for negative
-                    const qtyColor = netQty >= 0 ? 'text-success' : 'text-danger';
-                    const pnlColor = positionPnL >= 0 ? 'text-success' : 'text-danger';
-                    const realizedColor = realizedPnL >= 0 ? 'text-success' : (realizedPnL < 0 ? 'text-danger' : 'text-muted');
-                    const unrealizedColor = unrealizedPnL >= 0 ? 'text-success' : (unrealizedPnL < 0 ? 'text-danger' : 'text-muted');
+                    // Calculate lot size
+                    const lotSize = getLotSize(parsed.instrument, exch);
                     
-                    // Show "CLOSED" badge if netqty is 0
-                    const statusBadge = netQty === 0 ? '<span class="badge badge-red">CLOSED</span>' : '';
+                    // Calculate quantity in lots
+                    const qtyInLots = Math.abs(netQty) / lotSize;
+                    const qtyDisplay = qtyInLots > 0 ? `${netQty > 0 ? '+' : '-'}${qtyInLots} Lot` : '0 Lot';
+                    
+                    // Determine action/status
+                    let actionDisplay = '';
+                    const isClosed = netQty === 0;
+                    
+                    if (isClosed) {
+                        actionDisplay = '<span class="badge badge-red">CLOSED CF</span>';
+                    } else if (netQty > 0) {
+                        actionDisplay = '<span class="badge badge-blue">B CF</span>';
+                    } else if (netQty < 0) {
+                        actionDisplay = '<span class="badge badge-orange">S CF</span>';
+                    } else if (buyQty > 0 && sellQty > 0) {
+                        actionDisplay = `
+                            <button class="btn btn-xs btn-success me-1" onclick="quickBuy('${symbol}')">B Buy</button>
+                            <button class="btn btn-xs btn-danger" onclick="quickSell('${symbol}')">S Sell</button>
+                        `;
+                    }
+                    
+                    // ATP display (Buy/Sell prices)
+                    let atpDisplay = '';
+                    if (isClosed && buyPrice > 0 && sellPrice > 0) {
+                        atpDisplay = `<div style="font-size:11px;line-height:1.3;">B ${buyPrice.toFixed(2)}</div><div style="font-size:11px;line-height:1.3;">S ${sellPrice.toFixed(2)}</div>`;
+                    } else if (avgPrice > 0) {
+                        atpDisplay = `<span style="font-size:12px;">${avgPrice.toFixed(2)}</span>`;
+                    } else {
+                        atpDisplay = '-';
+                    }
+                    
+                    // LTP with percentage change
+                    let ltpDisplay = '';
+                    if (ltp > 0) {
+                        const change = previousClose > 0 ? ((ltp - previousClose) / previousClose * 100) : 0;
+                        const changeColor = change >= 0 ? '#10b981' : '#ef4444';
+                        const changeSign = change >= 0 ? '+' : '';
+                        ltpDisplay = `<div style="font-size:12px;">${ltp.toFixed(2)}</div><div style="font-size:10px;color:${changeColor};line-height:1.2;">(${changeSign}${change.toFixed(2)}%)</div>`;
+                    } else {
+                        ltpDisplay = '-';
+                    }
+                    
+                    // Gain & Loss
+                    const pnlColor = positionPnL >= 0 ? '#10b981' : '#ef4444';
+                    const pnlSign = positionPnL >= 0 ? '+' : '';
+                    const pnlPercent = avgPrice > 0 && netQty !== 0 ? ((positionPnL / Math.abs(netQty * avgPrice)) * 100) : 0;
+                    const pnlPercentDisplay = !isNaN(pnlPercent) && isFinite(pnlPercent) && pnlPercent !== 0 ? `(${pnlPercent >= 0 ? '+' : ''}${pnlPercent.toFixed(2)}%)` : '';
+                    
+                    const gainLossDisplay = `
+                        <div style="color:${pnlColor};font-weight:bold;font-size:12px;line-height:1.4;">
+                            ${pnlSign}${Math.abs(positionPnL).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${pnlPercentDisplay}
+                        </div>
+                        ${!isClosed ? `<button class="btn btn-xs btn-outline-danger mt-1" onclick="closePosition('${symbol}')" title="Close Position" style="padding:2px 6px;font-size:10px;"><i class="fas fa-times"></i></button>` : ''}
+                    `;
+                    
+                    // Stock name display - format properly
+                    const expiryDisplay = parsed.expiry ? `${parsed.expiry} ` : '';
+                    const strikeDisplay = parsed.strike ? `${parsed.strike} ` : '';
+                    const typeDisplay = parsed.type || '';
+                    const stockNameDisplay = `
+                        <div style="font-size:13px;line-height:1.4;"><strong>${parsed.instrument || symbolOnly}</strong> ${exch}</div>
+                        ${expiryDisplay || strikeDisplay || typeDisplay ? `<div style="font-size:10px;color:#94a3b8;line-height:1.3;margin-top:2px;">${expiryDisplay}${strikeDisplay}${typeDisplay}</div>` : ''}
+                    `;
                     
                     return `
                         <tr>
-                            <td><strong>${symbol}</strong> ${statusBadge}</td>
-                            <td>${exch}</td>
-                            <td><span class="badge ${product === 'MIS' ? 'badge-green' : 'badge-yellow'}">${product}</span></td>
-                            <td class="${qtyColor}"><strong>${netQty}</strong></td>
-                            <td>₹${avgPrice.toFixed(2)}</td>
-                            <td>₹${ltp.toFixed(2)}</td>
-                            <td class="${realizedColor}">₹${realizedPnL.toFixed(2)}</td>
-                            <td class="${unrealizedColor}">₹${unrealizedPnL.toFixed(2)}</td>
-                            <td class="${pnlColor}"><strong>₹${positionPnL.toFixed(2)}</strong></td>
+                            <td style="padding:10px 8px;word-wrap:break-word;line-height:1.4;">${stockNameDisplay}</td>
+                            <td style="padding:10px 8px;text-align:center;">${actionDisplay}</td>
+                            <td style="padding:10px 8px;white-space:nowrap;">
+                                <div>${qtyDisplay}</div>
+                                <div style="font-size:10px;color:#94a3b8;">(1 Lot = ${lotSize})</div>
+                            </td>
+                            <td style="padding:10px 8px;">${atpDisplay}</td>
+                            <td style="padding:10px 8px;">${ltpDisplay}</td>
+                            <td style="padding:10px 8px;">${gainLossDisplay}</td>
                         </tr>
                     `;
                 }).join('');
             }
         }
-        
-        // Display ONLY OPEN positions in "Open Orders" section (netqty != 0)
-        loadOpenPositions(openPositions);
         
     } catch (error) {
         console.error('❌ Error loading positions page:', error);
@@ -1700,7 +2490,7 @@ async function loadPositionsPage() {
         if (positionsTableBody) {
             positionsTableBody.innerHTML = `
                 <tr>
-                    <td colspan="9" class="text-center py-4" style="color:#ef4444;">
+                    <td colspan="6" class="text-center py-4" style="color:#ef4444;">
                         Error: ${error.message}
                     </td>
                 </tr>
@@ -1709,87 +2499,422 @@ async function loadPositionsPage() {
     }
 }
 
-// Load and display ONLY OPEN positions in "Open Orders" section
-async function loadOpenPositions(openPositions) {
+// Filter positions by search
+function filterPositions() {
+    const searchText = document.getElementById('positionsSearch')?.value.toLowerCase() || '';
+    const rows = document.querySelectorAll('#positionsTableBody tr');
+    
+    rows.forEach(row => {
+        const text = row.textContent.toLowerCase();
+        row.style.display = text.includes(searchText) ? '' : 'none';
+    });
+}
+
+// Export positions
+function exportPositions() {
+    alert('Export functionality coming soon!');
+}
+
+// Exit all positions
+function exitAllPositions() {
+    if (confirm('Are you sure you want to exit all positions?')) {
+        alert('Exit all functionality coming soon!');
+    }
+}
+
+// Secure exit all
+function secureExitAll() {
+    if (confirm('Are you sure you want to securely exit all positions?')) {
+        alert('Secure exit functionality coming soon!');
+    }
+}
+
+// Quick buy/sell
+function quickBuy(symbol) {
+    console.log('Quick buy:', symbol);
+    // TODO: Implement quick buy
+}
+
+function quickSell(symbol) {
+    console.log('Quick sell:', symbol);
+    // TODO: Implement quick sell
+}
+
+// Close position
+function closePosition(symbol) {
+    if (confirm(`Are you sure you want to close position: ${symbol}?`)) {
+        console.log('Closing position:', symbol);
+        // TODO: Implement close position
+    }
+}
+
+// ============================================
+// OPTION CHAIN FUNCTIONS
+// ============================================
+
+let currentOptionChainSymbol = 'NIFTY';
+let currentOptionChainData = null;
+let optionChainBasket = [];
+
+// Open option chain page
+function openOptionChain(symbol = 'NIFTY') {
+    console.log('🔗 Opening option chain for:', symbol);
+    console.log('📍 Current hash:', window.location.hash);
+    
+    // Verify element exists
+    const optionChainPage = document.getElementById('page-optionchain');
+    console.log('📄 Option chain page element:', optionChainPage ? 'Found ✅' : 'Not found ❌');
+    
+    if (!optionChainPage) {
+        console.error('❌ Option chain page element not found!');
+        alert('Option chain page not found. Please refresh the page.');
+        return;
+    }
+    
+    currentOptionChainSymbol = symbol;
+    window.location.hash = '#optionchain';
+    console.log('📍 Hash set to:', window.location.hash);
+    
+    // Call navigation immediately and also let hashchange handle it
+    handleNavigation();
+    
+    // Also ensure hashchange event fires if not already handled
+    setTimeout(() => {
+        if (window.location.hash !== '#optionchain') {
+            window.location.hash = '#optionchain';
+        }
+        handleNavigation();
+        console.log('✅ Navigation handled');
+    }, 50);
+}
+
+// Format number with K, L, Cr suffixes
+function formatNumber(num) {
+    if (!num && num !== 0) return '--';
+    const absNum = Math.abs(num);
+    if (absNum >= 10000000) {
+        return (num / 10000000).toFixed(2) + ' Cr';
+    } else if (absNum >= 100000) {
+        return (num / 100000).toFixed(2) + ' L';
+    } else if (absNum >= 1000) {
+        return (num / 1000).toFixed(1) + 'K';
+    }
+    return num.toLocaleString('en-IN');
+}
+
+// Format price change percentage
+function formatChange(value, isPercentage = false) {
+    if (!value && value !== 0) return '--';
+    const sign = value >= 0 ? '+' : '';
+    return `${sign}${value.toFixed(2)}${isPercentage ? '%' : ''}`;
+}
+
+// Load option chain data
+async function loadOptionChain() {
     try {
-        const openOrdersContainer = document.getElementById('openOrdersContainer');
-        if (!openOrdersContainer) {
-            console.error('❌ openOrdersContainer element not found');
+        const symbol = currentOptionChainSymbol;
+        const tableBody = document.getElementById('optionChainTableBody');
+        
+        if (!tableBody) {
+            console.error('Option chain table body not found');
             return;
         }
         
-        // openPositions should already be filtered (netqty != 0)
-        if (!openPositions || openPositions.length === 0) {
-            openOrdersContainer.innerHTML = `
-                <div class="text-center py-3" style="color:#64748b;">
-                    <i class="fas fa-check-circle me-2"></i> No open positions
-                </div>
-            `;
-            return;
-        }
-        
-        console.log(`✅ Displaying ${openPositions.length} open positions in Open Orders section`);
-        
-        openOrdersContainer.innerHTML = `
-            <div style="max-height:400px;overflow-y:auto;">
-                <table class="table-modern">
-                    <thead>
-                        <tr>
-                            <th>Symbol</th>
-                            <th>Exchange</th>
-                            <th>Product</th>
-                            <th>Net Qty</th>
-                            <th>Avg Price</th>
-                            <th>LTP</th>
-                            <th>Realized P&L</th>
-                            <th>Unrealized P&L</th>
-                            <th>Total P&L</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${openPositions.map(position => {
-                            const symbol = position.tsym || position.TSYM || position.symbol || 'N/A';
-                            const exch = position.exch || position.EXCH || 'N/A';
-                            const product = position.s_prdt_ali || position.S_PRDT_ALI || position.prd || 'N/A';
-                            const netQty = parseFloat(position.netqty || position.NETQTY || 0);
-                            const avgPrice = parseFloat(position.netavgprc || position.NETAVGPRC || position.avgprc || position.AVGPRC || 0);
-                            const ltp = parseFloat(position.lp || position.LP || position.ltp || position.LTP || 0);
-                            const realizedPnL = parseFloat(position.rpnl || position.RPNL || 0);
-                            const unrealizedPnL = parseFloat(position.urmtom || position.URMTOM || position.upnl || position.UPNL || 0);
-                            const positionPnL = realizedPnL + unrealizedPnL;
-                            
-                            const qtyColor = netQty >= 0 ? 'text-success' : 'text-danger';
-                            const pnlColor = positionPnL >= 0 ? 'text-success' : 'text-danger';
-                            const realizedColor = realizedPnL >= 0 ? 'text-success' : (realizedPnL < 0 ? 'text-danger' : 'text-muted');
-                            const unrealizedColor = unrealizedPnL >= 0 ? 'text-success' : (unrealizedPnL < 0 ? 'text-danger' : 'text-muted');
-                            
-                            return `
-                                <tr>
-                                    <td><strong>${symbol}</strong></td>
-                                    <td>${exch}</td>
-                                    <td><span class="badge ${product === 'MIS' ? 'badge-green' : 'badge-yellow'}">${product}</span></td>
-                                    <td class="${qtyColor}"><strong>${netQty}</strong></td>
-                                    <td>₹${avgPrice.toFixed(2)}</td>
-                                    <td>₹${ltp.toFixed(2)}</td>
-                                    <td class="${realizedColor}">₹${realizedPnL.toFixed(2)}</td>
-                                    <td class="${unrealizedColor}">₹${unrealizedPnL.toFixed(2)}</td>
-                                    <td class="${pnlColor}"><strong>₹${positionPnL.toFixed(2)}</strong></td>
-                                </tr>
-                            `;
-                        }).join('')}
-                    </tbody>
-                </table>
-            </div>
+        tableBody.innerHTML = `
+            <tr>
+                <td colspan="9" class="text-center py-4" style="color:#64748b;">
+                    <i class="fas fa-spinner fa-spin me-2"></i> Loading option chain...
+                </td>
+            </tr>
         `;
+        
+        // Update header
+        document.getElementById('optionChainSymbol').textContent = symbol;
+        
+        // Fetch option chain data
+        console.log('📡 Fetching option chain for:', symbol);
+        const response = await fetch(`/api/option-chain/${symbol}`, {
+            credentials: 'include'
+        });
+        
+        console.log('📡 Option chain response status:', response.status);
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const data = await response.json();
+        console.log('📦 Option chain data received:', data);
+        currentOptionChainData = data;
+        
+        // Update header with current price
+        const spotPrice = data.underlyingValue || 0;
+        const priceChange = 0; // Calculate from data if available
+        const priceChangePercent = 0; // Calculate from data if available
+        
+        document.getElementById('optionChainPrice').textContent = spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        document.getElementById('optionChainPrice').innerHTML = `₹${spotPrice.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        
+        const changeColor = priceChange >= 0 ? '#10b981' : '#ef4444';
+        const changeSign = priceChange >= 0 ? '+' : '';
+        document.getElementById('optionChainChange').innerHTML = 
+            `<span style="color:${changeColor};">${changeSign}${priceChange.toFixed(2)} (${changeSign}${priceChangePercent.toFixed(2)}%)</span>`;
+        
+        // Populate expiry dropdown
+        const expirySelect = document.getElementById('optionChainExpiry');
+        if (data.expiryDates && data.expiryDates.length > 0) {
+            expirySelect.innerHTML = data.expiryDates.map(expiry => 
+                `<option value="${expiry}">${expiry}</option>`
+            ).join('');
+        } else {
+            // Generate default expiry dates
+            const defaultExpiries = ['04 Nov 2025', '11 Nov 2025', '18 Nov 2025', '25 Nov 2025', '02 Dec 2025'];
+            expirySelect.innerHTML = defaultExpiries.map(expiry => 
+                `<option value="${expiry}">${expiry}</option>`
+            ).join('');
+        }
+        
+        // Render option chain table
+        renderOptionChainTable(data, spotPrice);
+        
     } catch (error) {
-        console.error('❌ Error loading open positions:', error);
-        const openOrdersContainer = document.getElementById('openOrdersContainer');
-        if (openOrdersContainer) {
-            openOrdersContainer.innerHTML = `
-                <div class="text-center py-3" style="color:#ef4444;">
-                    Error loading open positions
-                </div>
+        console.error('Error loading option chain:', error);
+        const tableBody = document.getElementById('optionChainTableBody');
+        if (tableBody) {
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="9" class="text-center py-4" style="color:#ef4444;">
+                        <i class="fas fa-exclamation-triangle me-2"></i> Error loading option chain: ${error.message}
+                    </td>
+                </tr>
             `;
         }
     }
 }
+
+// Render option chain table
+function renderOptionChainTable(data, spotPrice) {
+    console.log('🎨 Rendering option chain table...');
+    const tableBody = document.getElementById('optionChainTableBody');
+    if (!tableBody) {
+        console.error('❌ Table body not found!');
+        return;
+    }
+    if (!data.options) {
+        console.error('❌ No options data!', data);
+        return;
+    }
+    console.log('✅ Rendering', data.options.length, 'options');
+    
+    // Group options by strike price
+    const strikesMap = new Map();
+    
+    data.options.forEach(option => {
+        const strike = option.strikePrice;
+        if (!strikesMap.has(strike)) {
+            strikesMap.set(strike, { strike, call: null, put: null });
+        }
+        
+        if (option.optionType === 'CE') {
+            strikesMap.get(strike).call = option;
+        } else if (option.optionType === 'PE') {
+            strikesMap.get(strike).put = option;
+        }
+    });
+    
+    // Sort strikes
+    const strikes = Array.from(strikesMap.keys()).sort((a, b) => a - b);
+    
+    // Find ATM strike
+    const atmStrike = strikes.reduce((prev, curr) => 
+        Math.abs(curr - spotPrice) < Math.abs(prev - spotPrice) ? curr : prev
+    );
+    
+    // Render rows
+    tableBody.innerHTML = strikes.map(strike => {
+        const row = strikesMap.get(strike);
+        const call = row.call || {};
+        const put = row.put || {};
+        const isATM = strike === atmStrike;
+        
+        // Call option data
+        const callLTP = call.lastPrice || 0;
+        const callChange = parseFloat(call.change || 0);
+        const callChangePercent = parseFloat(call.pChange || 0);
+        const callOI = call.openInterest || 0;
+        const callOIChange = 0; // Not available in API response
+        const callOIChangePercent = 0;
+        
+        // Put option data
+        const putLTP = put.lastPrice || 0;
+        const putChange = parseFloat(put.change || 0);
+        const putChangePercent = parseFloat(put.pChange || 0);
+        const putOI = put.openInterest || 0;
+        const putOIChange = 0;
+        const putOIChangePercent = 0;
+        
+        return `
+            <tr class="${isATM ? 'atm-strike' : ''}" data-strike="${strike}">
+                <!-- Call OI Change -->
+                <td>
+                    <div style="text-align:right;">
+                        <div style="font-size:11px;color:${callOIChange >= 0 ? '#10b981' : '#ef4444'};">${formatNumber(callOIChange)}</div>
+                        <div style="font-size:10px;color:#64748b;">${formatChange(callOIChangePercent, true)}</div>
+                    </div>
+                </td>
+                <!-- Call OI -->
+                <td>
+                    <div style="text-align:right;font-size:11px;">${formatNumber(callOI)}</div>
+                </td>
+                <!-- Call LTP -->
+                <td>
+                    <div style="text-align:right;">
+                        <div class="option-chain-price">₹${callLTP.toFixed(2)}</div>
+                        <div class="option-chain-change ${callChange >= 0 ? 'positive' : 'negative'}">${formatChange(callChange)} (${formatChange(callChangePercent, true)})</div>
+                    </div>
+                </td>
+                <!-- Call Actions -->
+                <td style="text-align:center;">
+                    <button class="option-chain-btn buy" onclick="quickBuyOption('${currentOptionChainSymbol}', ${strike}, 'CE')" title="Buy Call">B</button>
+                    <button class="option-chain-btn sell" onclick="quickSellOption('${currentOptionChainSymbol}', ${strike}, 'CE')" title="Sell Call">S</button>
+                </td>
+                <!-- Strike -->
+                <td>
+                    ${isATM ? `<div style="position:absolute;left:0;top:50%;transform:translateY(-50%);background:#ef4444;color:#fff;padding:2px 6px;font-size:9px;border-radius:0 4px 4px 0;">${spotPrice.toFixed(2)}</div>` : ''}
+                    <div style="font-weight:700;">${strike.toLocaleString('en-IN')}</div>
+                    ${isATM ? '<div style="position:absolute;right:0;top:0;bottom:0;width:3px;background:#ef4444;"></div>' : ''}
+                </td>
+                <!-- Put Actions -->
+                <td style="text-align:center;">
+                    <button class="option-chain-btn buy" onclick="quickBuyOption('${currentOptionChainSymbol}', ${strike}, 'PE')" title="Buy Put">B</button>
+                    <button class="option-chain-btn sell" onclick="quickSellOption('${currentOptionChainSymbol}', ${strike}, 'PE')" title="Sell Put">S</button>
+                </td>
+                <!-- Put LTP -->
+                <td>
+                    <div style="text-align:left;">
+                        <div class="option-chain-price">₹${putLTP.toFixed(2)}</div>
+                        <div class="option-chain-change ${putChange >= 0 ? 'positive' : 'negative'}">${formatChange(putChange)} (${formatChange(putChangePercent, true)})</div>
+                    </div>
+                </td>
+                <!-- Put OI -->
+                <td>
+                    <div style="text-align:left;font-size:11px;">${formatNumber(putOI)}</div>
+                </td>
+                <!-- Put OI Change -->
+                <td>
+                    <div style="text-align:left;">
+                        <div style="font-size:11px;color:${putOIChange >= 0 ? '#10b981' : '#ef4444'};">${formatNumber(putOIChange)}</div>
+                        <div style="font-size:10px;color:#64748b;">${formatChange(putOIChangePercent, true)}</div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+}
+
+// Filter option chain strikes
+function filterOptionChainStrikes() {
+    const searchValue = document.getElementById('optionChainStrikeSearch').value.toLowerCase();
+    const rows = document.querySelectorAll('#optionChainTableBody tr');
+    
+    rows.forEach(row => {
+        const strike = row.getAttribute('data-strike');
+        if (strike && strike.includes(searchValue)) {
+            row.style.display = '';
+        } else {
+            row.style.display = searchValue === '' ? '' : 'none';
+        }
+    });
+}
+
+// Quick buy option
+function quickBuyOption(symbol, strike, optionType) {
+    console.log(`Quick Buy: ${symbol} ${strike} ${optionType}`);
+    // TODO: Implement quick buy option
+    addToBasket(symbol, strike, optionType, 'BUY');
+}
+
+// Quick sell option
+function quickSellOption(symbol, strike, optionType) {
+    console.log(`Quick Sell: ${symbol} ${strike} ${optionType}`);
+    // TODO: Implement quick sell option
+    addToBasket(symbol, strike, optionType, 'SELL');
+}
+
+// Add to basket
+function addToBasket(symbol, strike, optionType, action) {
+    const item = {
+        symbol,
+        strike,
+        optionType,
+        action,
+        timestamp: Date.now()
+    };
+    
+    optionChainBasket.push(item);
+    updateBasket();
+    showToast(`Added to basket: ${symbol} ${strike} ${optionType} ${action}`, 'success');
+}
+
+// Update basket display
+function updateBasket() {
+    const basketCount = document.getElementById('basketCount');
+    const basketItems = document.getElementById('basketItems');
+    
+    if (basketCount) {
+        basketCount.textContent = optionChainBasket.length;
+    }
+    
+    if (basketItems) {
+        if (optionChainBasket.length === 0) {
+            basketItems.innerHTML = '<div class="text-center text-muted py-2" style="font-size:11px;">No items in basket</div>';
+        } else {
+            basketItems.innerHTML = optionChainBasket.map((item, index) => `
+                <div class="basket-item">
+                    <div>
+                        <div class="basket-item-symbol">${item.symbol} ${item.strike} ${item.optionType}</div>
+                        <div style="font-size:10px;color:#64748b;">${item.action}</div>
+                    </div>
+                    <button class="btn btn-xs btn-outline-danger" onclick="removeFromBasket(${index})" style="padding:2px 6px;">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
+            `).join('');
+        }
+    }
+}
+
+// Remove from basket
+function removeFromBasket(index) {
+    optionChainBasket.splice(index, 1);
+    updateBasket();
+}
+
+// Toggle basket visibility
+function toggleBasket() {
+    const basket = document.getElementById('optionChainBasket');
+    if (basket) {
+        const currentDisplay = basket.style.display;
+        basket.style.display = (currentDisplay === 'none' || currentDisplay === '') ? 'block' : 'none';
+    }
+}
+
+// Clear basket
+function clearBasket() {
+    if (confirm('Clear all items from basket?')) {
+        optionChainBasket = [];
+        updateBasket();
+    }
+}
+
+// Create strategy
+function createStrategy() {
+    if (optionChainBasket.length === 0) {
+        showToast('Basket is empty. Add options to create a strategy.', 'warning');
+        return;
+    }
+    console.log('Creating strategy from basket:', optionChainBasket);
+    // TODO: Implement strategy creation
+    showToast('Strategy creation feature coming soon!', 'info');
+}
+
